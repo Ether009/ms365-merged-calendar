@@ -285,24 +285,29 @@ function ms365cal_recurrence_text( $cal, $master_id, $token ) {
  * events don't look like single all-day entries.
  */
 function ms365cal_when_label( $start, $end, $all_day, $time_fmt ) {
+	// Render in the same zone the times were parsed in (the plugin's configured
+	// timezone), not wp_date()'s default of the WordPress site timezone. Those two
+	// can differ, and for an all-day event pinned to midnight the difference flips
+	// the displayed day — so the label would disagree with the day it's grouped under.
+	$tz = $start->getTimezone();
 	if ( $all_day ) {
 		// Graph's all-day end is exclusive midnight, so the last real day is -1.
 		$end_incl = ( clone $end )->modify( '-1 day' );
 		if ( $end_incl->format( 'Y-m-d' ) <= $start->format( 'Y-m-d' ) ) {
 			return 'All day';
 		}
-		return 'All day · ' . wp_date( 'j M', $start->getTimestamp() ) . ' – ' . wp_date( 'j M', $end_incl->getTimestamp() );
+		return 'All day · ' . wp_date( 'j M', $start->getTimestamp(), $tz ) . ' – ' . wp_date( 'j M', $end_incl->getTimestamp(), $tz );
 	}
 
-	$s_time = wp_date( $time_fmt, $start->getTimestamp() );
-	$e_time = wp_date( $time_fmt, $end->getTimestamp() );
+	$s_time = wp_date( $time_fmt, $start->getTimestamp(), $tz );
+	$e_time = wp_date( $time_fmt, $end->getTimestamp(), $tz );
 
 	if ( $start->format( 'Y-m-d' ) === $end->format( 'Y-m-d' ) ) {
 		return $s_time . ' – ' . $e_time;
 	}
 
-	return wp_date( 'j M', $start->getTimestamp() ) . ' ' . $s_time
-		. ' – ' . wp_date( 'j M', $end->getTimestamp() ) . ' ' . $e_time;
+	return wp_date( 'j M', $start->getTimestamp(), $tz ) . ' ' . $s_time
+		. ' – ' . wp_date( 'j M', $end->getTimestamp(), $tz ) . ' ' . $e_time;
 }
 
 /**
@@ -433,7 +438,7 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 
 				$when = $en
 					? ms365cal_when_label( $st, $en, $allday, $time_fmt )
-					: ( $allday ? 'All day' : wp_date( $time_fmt, $st->getTimestamp() ) );
+					: ( $allday ? 'All day' : wp_date( $time_fmt, $st->getTimestamp(), $zone ) );
 
 				// Recurrence: calendarView returns expanded occurrences; the pattern
 				// lives on the series master, which we fetch once per series.
@@ -451,7 +456,7 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 					'title'    => isset( $e['subject'] ) && '' !== $e['subject'] ? $e['subject'] : '(no subject)',
 					'sort'     => $eff->format( 'Y-m-d\TH:i:s' ),
 					'dayKey'   => $eff->format( 'Y-m-d' ),
-					'dayLabel' => wp_date( 'D j M', $eff->getTimestamp() ),
+					'dayLabel' => wp_date( 'D j M', $eff->getTimestamp(), $zone ),
 					'when'     => $when,
 					'recur'    => $recur,
 					'location' => isset( $e['location']['displayName'] ) ? $e['location']['displayName'] : '',

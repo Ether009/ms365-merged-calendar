@@ -215,3 +215,9 @@ drives whether an update is offered — it must match / exceed the tag), then
     `php -l` + WordPress-Extra (no local PHP on this box).
 14. `webLink` now gated server-side: when `show_outlook` is off, the REST response
     strips `link` so the Outlook URL never leaves the server (was render-only before).
+15. Fixed timezone-basis mismatch in date/time labels: `sort`/`dayKey` format via the
+    DateTime's own (plugin) zone, but the `wp_date()` labels rendered in the WordPress
+    site zone. When the two settings differ, all-day events (pinned to midnight) showed
+    the wrong day and disagreed with their group. `wp_date()` now takes the plugin zone
+    explicitly. (Minor sibling not yet addressed: the recurrence "until" date in
+    `ms365cal_format_recurrence()`.)
