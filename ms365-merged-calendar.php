@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.0.1
+ * Version:           2.0.2
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -844,6 +844,20 @@ function ms365cal_rest_events( WP_REST_Request $req ) {
 		return new WP_REST_Response(
 			array( 'error' => current_user_can( 'manage_options' ) ? $events->get_error_message() : 'unavailable' ),
 			503
+		);
+	}
+
+	// Data minimisation: the Outlook webLink only needs to reach the browser when
+	// the "Open in Outlook" link is enabled. When it's off, strip it server-side so
+	// it never leaves the server (the front end hides it either way, but this keeps
+	// the raw link out of the unauthenticated response entirely).
+	if ( empty( $settings['show_outlook'] ) ) {
+		$events = array_map(
+			function ( $ev ) {
+				unset( $ev['link'] );
+				return $ev;
+			},
+			$events
 		);
 	}
 

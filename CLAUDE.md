@@ -188,8 +188,6 @@ drives whether an update is offered — it must match / exceed the tag), then
 
 ## Known items / possible next work
 
-- `show_outlook` currently gates *rendering* only; `webLink` is still sent to the
-  browser. Could gate server-side so it never leaves the server when disabled.
 - `MS365CAL_MAX_WINDOW` (62) is a code constant, not a UI field (deliberate safety bound).
 - Default shortcode window is 14 days (tested at 60). Consider per-shortcode defaults.
 - The 10 categorical calendar colors aren't fully colorblind-safe; the label pills
@@ -215,3 +213,5 @@ drives whether an update is offered — it must match / exceed the tag), then
 13. Published to GitHub (Ether009/ms365-merged-calendar, public). Self-update wired via
     bundled plugin-update-checker v5 + a tag-driven release workflow; lint CI enforces
     `php -l` + WordPress-Extra (no local PHP on this box).
+14. `webLink` now gated server-side: when `show_outlook` is off, the REST response
+    strips `link` so the Outlook URL never leaves the server (was render-only before).
