@@ -222,9 +222,10 @@ exists on a site once it's running 2.0.4+.
 
 - `MS365CAL_MAX_WINDOW` (62) is a code constant, not a UI field (deliberate safety bound).
 - Window is now a fixed Monday-aligned week (JS forces `days=7`); the `days` attribute
-  is effectively ignored in weekly mode. Some front-end strings are Swedish (`Heldag`,
-  `Tidigare Händelser`, `Plats`, `Onlinemöte`, `Laddar…`); recurrence text and error
-  messages are still English — a full i18n pass is unaddressed.
+  is effectively ignored in weekly mode. The front-end (visitor-facing) strings are
+  **all Swedish**, including recurrence text (`Upprepas varje vecka på mån…`, days
+  `mån/tis/…`, `Återkommande händelse`) and error/loading messages. The **admin settings
+  page** is still English (deliberately — it's the admin config screen).
 - The 10 categorical calendar colors aren't fully colorblind-safe; the label pills
   mitigate this.
 - Recurrence master-fetching adds Graph calls on a cold fetch; amortized by caching.
@@ -298,3 +299,7 @@ exists on a site once it's running 2.0.4+.
 24. Changing week now clears the list and shows a `Laddar…` indicator on a cache-miss
     fetch, instead of leaving the previous week on screen (dimmed) until the new one
     loads. Already-visited weeks still repaint instantly from the client cache.
+25. Full Swedish pass on all visitor-facing strings: recurrence text (`ms365cal_format_
+    recurrence()` — days, ordinals, `Upprepas … till …`), `Återkommande händelse`,
+    `(ingen rubrik)`, shell UI (`Kalendrar`, `Välj alla`, `Rensa`, nav aria-labels), and
+    JS error/retry strings. Graph `case` values and the admin page stay English.

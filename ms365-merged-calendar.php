@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.1.5
+ * Version:           2.1.6
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -190,8 +190,8 @@ function ms365cal_events_rel_base( $cal ) {
 }
 
 /**
- * Human-readable recurrence summary from a Graph recurrence object, e.g.
- * "Repeats weekly on Mon, Wed" or "Repeats monthly on day 15 until 1 Dec 2026".
+ * Human-readable (Swedish) recurrence summary from a Graph recurrence object, e.g.
+ * "Upprepas varje vecka på mån, ons" or "Upprepas varje månad den 15:e till 1 dec 2026".
  */
 function ms365cal_format_recurrence( $rec ) {
 	if ( empty( $rec['pattern']['type'] ) ) {
@@ -201,56 +201,64 @@ function ms365cal_format_recurrence( $rec ) {
 	$interval = isset( $p['interval'] ) ? max( 1, (int) $p['interval'] ) : 1;
 
 	$abbr = array(
-		'monday'    => 'Mon',
-		'tuesday'   => 'Tue',
-		'wednesday' => 'Wed',
-		'thursday'  => 'Thu',
-		'friday'    => 'Fri',
-		'saturday'  => 'Sat',
-		'sunday'    => 'Sun',
+		'monday'    => 'mån',
+		'tuesday'   => 'tis',
+		'wednesday' => 'ons',
+		'thursday'  => 'tor',
+		'friday'    => 'fre',
+		'saturday'  => 'lör',
+		'sunday'    => 'sön',
+	);
+	$ord = array(
+		'first'  => 'första',
+		'second' => 'andra',
+		'third'  => 'tredje',
+		'fourth' => 'fjärde',
+		'last'   => 'sista',
 	);
 	$days = array();
 	if ( ! empty( $p['daysOfWeek'] ) && is_array( $p['daysOfWeek'] ) ) {
 		foreach ( $p['daysOfWeek'] as $d ) {
-			$days[] = isset( $abbr[ strtolower( $d ) ] ) ? $abbr[ strtolower( $d ) ] : ucfirst( $d );
+			$days[] = isset( $abbr[ strtolower( $d ) ] ) ? $abbr[ strtolower( $d ) ] : $d;
 		}
 	}
 	$day_list = implode( ', ', $days );
-	$index    = isset( $p['index'] ) ? $p['index'] : 'first';
+	$idx_key  = isset( $p['index'] ) ? $p['index'] : 'first';
+	$index    = isset( $ord[ $idx_key ] ) ? $ord[ $idx_key ] : 'första';
 
 	switch ( $p['type'] ) {
 		case 'daily':
-			$s = $interval > 1 ? "every {$interval} days" : 'daily';
+			$s = $interval > 1 ? "var {$interval}:e dag" : 'dagligen';
 			break;
 		case 'weekly':
-			$base = $interval > 1 ? "every {$interval} weeks" : 'weekly';
-			$s    = $day_list ? "{$base} on {$day_list}" : $base;
+			$base = $interval > 1 ? "var {$interval}:e vecka" : 'varje vecka';
+			$s    = $day_list ? "{$base} på {$day_list}" : $base;
 			break;
 		case 'absoluteMonthly':
-			$base = $interval > 1 ? "every {$interval} months" : 'monthly';
+			$base = $interval > 1 ? "var {$interval}:e månad" : 'varje månad';
 			$dom  = isset( $p['dayOfMonth'] ) ? (int) $p['dayOfMonth'] : 0;
-			$s    = $dom ? "{$base} on day {$dom}" : $base;
+			$s    = $dom ? "{$base} den {$dom}:e" : $base;
 			break;
 		case 'relativeMonthly':
-			$base = $interval > 1 ? "every {$interval} months" : 'monthly';
-			$s    = trim( "{$base} on the {$index} {$day_list}" );
+			$base = $interval > 1 ? "var {$interval}:e månad" : 'varje månad';
+			$s    = trim( "{$base} den {$index} {$day_list}" );
 			break;
 		case 'absoluteYearly':
-			$s = 'yearly';
+			$s = 'årligen';
 			break;
 		case 'relativeYearly':
-			$s = trim( "yearly on the {$index} {$day_list}" );
+			$s = trim( "årligen den {$index} {$day_list}" );
 			break;
 		default:
-			$s = 'on a schedule';
+			$s = 'enligt schema';
 	}
 
-	$label = 'Repeats ' . $s;
+	$label = 'Upprepas ' . $s;
 
 	if ( isset( $rec['range']['type'] ) && 'endDate' === $rec['range']['type'] && ! empty( $rec['range']['endDate'] ) ) {
 		$ts = strtotime( $rec['range']['endDate'] );
 		if ( $ts ) {
-			$label .= ' until ' . wp_date( 'j M Y', $ts );
+			$label .= ' till ' . wp_date( 'j M Y', $ts );
 		}
 	}
 
@@ -264,7 +272,7 @@ function ms365cal_format_recurrence( $rec ) {
  * budget (MS365CAL_MAX_MASTERS, shared across calendars via a static) bounds how many
  * are resolved so a pathological window can't fan out without limit. Anything not
  * resolved (over budget, HTTP failure, or a master with no pattern) is simply omitted
- * from the returned map, and the caller shows a generic "Recurring event".
+ * from the returned map, and the caller shows a generic "Återkommande händelse".
  *
  * @param array  $cal        Calendar config.
  * @param array  $master_ids Series-master IDs to resolve.
@@ -544,16 +552,16 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 				$master_id = isset( $e['seriesMasterId'] ) ? $e['seriesMasterId'] : '';
 				$etype     = isset( $e['type'] ) ? $e['type'] : '';
 				if ( '' !== $master_id ) {
-					$recur = 'Recurring event';
+					$recur = 'Återkommande händelse';
 
 					$need_masters[ $master_id ] = true;
 				} elseif ( in_array( $etype, array( 'occurrence', 'exception' ), true ) ) {
-					$recur = 'Recurring event';
+					$recur = 'Återkommande händelse';
 				}
 
 				$row = array(
 					'cal'      => $cal['slug'],
-					'title'    => isset( $e['subject'] ) && '' !== $e['subject'] ? $e['subject'] : '(no subject)',
+					'title'    => isset( $e['subject'] ) && '' !== $e['subject'] ? $e['subject'] : '(ingen rubrik)',
 					'sort'     => $eff->format( 'Y-m-d\TH:i:s' ),
 					'dayKey'   => $eff->format( 'Y-m-d' ),
 					'dayLabel' => wp_date( 'D j M', $eff->getTimestamp(), $zone ),
@@ -1134,7 +1142,7 @@ function ms365cal_shortcode( $atts ) {
 	$all_cals = $settings['calendars'];
 
 	if ( empty( $all_cals ) ) {
-		return '<p>No calendars configured yet. Add some under Settings &rarr; MS365 Calendar.</p>';
+		return '<p>Inga kalendrar har konfigurerats än. Lägg till några under Inställningar &rarr; MS365 Calendar.</p>';
 	}
 
 	$atts = shortcode_atts(
@@ -1161,7 +1169,7 @@ function ms365cal_shortcode( $atts ) {
 		)
 	);
 	if ( empty( $scoped ) ) {
-		return '<p>None of the requested calendars exist.</p>';
+		return '<p>Ingen av de begärda kalendrarna finns.</p>';
 	}
 
 	$window = min( MS365CAL_MAX_WINDOW, max( 1, (int) $atts['days'] ) );
@@ -1203,19 +1211,19 @@ function ms365cal_shortcode( $atts ) {
 	?>
 	<div class="ms365cal" id="<?php echo esc_attr( $uid ); ?>" data-config='<?php echo esc_attr( wp_json_encode( $config ) ); ?>'>
 		<div class="ms365cal-bar">
-			<span class="ms365cal-title">Team calendars</span>
+			<span class="ms365cal-title">Kalendrar</span>
 			<span>
-				<button type="button" class="ms365cal-act" data-act="all">Select all</button>
-				<button type="button" class="ms365cal-act" data-act="none">Clear</button>
+				<button type="button" class="ms365cal-act" data-act="all">Välj alla</button>
+				<button type="button" class="ms365cal-act" data-act="none">Rensa</button>
 			</span>
 		</div>
 
 		<div class="ms365cal-chips"></div>
 
 		<div class="ms365cal-nav">
-			<button type="button" class="ms365cal-page" data-dir="-1" aria-label="Previous days">&larr;</button>
+			<button type="button" class="ms365cal-page" data-dir="-1" aria-label="Föregående vecka">&larr;</button>
 			<span class="ms365cal-range"></span>
-			<button type="button" class="ms365cal-page" data-dir="1" aria-label="Next days">&rarr;</button>
+			<button type="button" class="ms365cal-page" data-dir="1" aria-label="Nästa vecka">&rarr;</button>
 		</div>
 
 		<div class="ms365cal-list" aria-live="polite">
@@ -1348,7 +1356,7 @@ function ms365cal_assets() {
 				var m=cfg.meta[e.cal];if(!m)return;
 				if(e.dayKey!==lastDay){html+='<div class="ms365cal-day">'+esc(e.dayLabel)+'</div>';lastDay=e.dayKey;}
 
-				var recurShort=e.recur?e.recur.replace(/^Repeats\s+/,''):'';
+				var recurShort=e.recur?e.recur.replace(/^Upprepas\s+/,''):'';
 				var meta='<span class="ms365cal-pill" style="color:'+m.color+';background:'+m.bg+'">'+esc(m.label)+'</span>';
 				var recurLine=e.recur?'<div class="ms365cal-recur-line">\u21bb '+esc(recurShort)+'</div>':'';
 
@@ -1470,9 +1478,9 @@ function ms365cal_assets() {
 					if(''+err.message==='429'){
 						var wait=Math.min(err.retryAfter||30,120);
 						var auto=throttleRetries<MAX_THROTTLE_RETRIES;
-						listEl.innerHTML='<p class="ms365cal-error">Busy right now \u2014 '
-							+(auto?'retrying in '+wait+'s\u2026':'please try again shortly.')
-							+'<button type="button" class="ms365cal-retry">Retry now</button></p>';
+						listEl.innerHTML='<p class="ms365cal-error">Upptaget just nu \u2014 '
+							+(auto?'f\u00f6rs\u00f6ker igen om '+wait+'s\u2026':'f\u00f6rs\u00f6k igen om en stund.')
+							+'<button type="button" class="ms365cal-retry">F\u00f6rs\u00f6k igen</button></p>';
 						var rb=listEl.querySelector('.ms365cal-retry');
 						if(rb)rb.addEventListener('click',function(){throttleRetries=0;load();});
 						if(auto){
@@ -1482,8 +1490,8 @@ function ms365cal_assets() {
 						return;
 					}
 
-					listEl.innerHTML='<p class="ms365cal-error">Couldn\u2019t load the calendar.'
-						+'<button type="button" class="ms365cal-retry">Retry</button></p>';
+					listEl.innerHTML='<p class="ms365cal-error">Kunde inte ladda kalendern.'
+						+'<button type="button" class="ms365cal-retry">F\u00f6rs\u00f6k igen</button></p>';
 					var rb2=listEl.querySelector('.ms365cal-retry');
 					if(rb2)rb2.addEventListener('click',load);
 				});
