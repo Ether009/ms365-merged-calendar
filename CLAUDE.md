@@ -263,3 +263,8 @@ exists on a site once it's running 2.0.4+.
     hop can't self-heal (the deactivation runs in the OLD 2.0.6 code), so the release
     auto-trigger was temporarily disabled in `release.yml` during recovery, then
     re-enabled after the live site reached 2.0.8 (a self-update verified `reactivated`).
+20. Front-end list restyle (CSS-only + two JS meta classes): uppercase day headers,
+    rounded color rail, softer row hover, clearer meta line (prominent tabular time,
+    refined pill, muted recurrence/location via `.ms365cal-when`/`.ms365cal-loc`).
+    Muted tones use `opacity` + neutral rgba (`--ms-line`/`--ms-soft`) so it adapts to
+    the host theme's text color rather than hardcoded grays.

@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.0.8
+ * Version:           2.0.9
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1189,45 +1189,48 @@ add_shortcode( 'ms365_calendar', 'ms365cal_shortcode' );
 function ms365cal_assets() {
 	?>
 	<style>
-	.ms365cal{--b:#e2e2df;font-size:15px;line-height:1.5;}
-	.ms365cal-bar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
-	.ms365cal-title{font-weight:600;}
-	.ms365cal-act{font-size:13px;padding:4px 10px;margin-left:6px;background:transparent;border:1px solid var(--b);border-radius:6px;cursor:pointer;}
-	.ms365cal-act:hover{background:#f5f5f3;}
-	.ms365cal-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
-	.ms365cal-chip{display:inline-flex;align-items:center;gap:7px;font-size:13px;padding:5px 11px;border-radius:999px;cursor:pointer;border:1px solid var(--b);background:transparent;color:#888;}
-	.ms365cal-chip.is-on{border-color:var(--cc);background:var(--cbg);color:#333;}
-	.ms365cal-dot{width:9px;height:9px;border-radius:50%;background:#ccc;}
-	.ms365cal-chip.is-on .ms365cal-dot{background:var(--cc);}
-	.ms365cal-nav{display:flex;align-items:center;gap:14px;margin-bottom:8px;}
-	.ms365cal-page{width:34px;height:34px;border:1px solid var(--b);border-radius:8px;background:transparent;cursor:pointer;font-size:16px;line-height:1;}
-	.ms365cal-page:hover{background:#f5f5f3;}
-	.ms365cal-page:disabled{opacity:.4;cursor:default;}
+	.ms365cal{--ms-line:rgba(120,120,125,.22);--ms-soft:rgba(120,120,125,.09);font-size:15px;line-height:1.5;}
+	.ms365cal-bar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+	.ms365cal-title{font-weight:700;font-size:1.05em;}
+	.ms365cal-act{font-size:12px;padding:5px 12px;margin-left:6px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.75;transition:background .15s,opacity .15s;}
+	.ms365cal-act:hover{background:var(--ms-soft);opacity:1;}
+	.ms365cal-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;}
+	.ms365cal-chip{display:inline-flex;align-items:center;gap:7px;font-size:13px;padding:6px 13px;border-radius:999px;cursor:pointer;border:1px solid var(--ms-line);background:transparent;color:inherit;opacity:.5;transition:opacity .15s,border-color .15s,background .15s;}
+	.ms365cal-chip:hover{opacity:.8;}
+	.ms365cal-chip.is-on{border-color:var(--cc);background:var(--cbg);opacity:1;}
+	.ms365cal-dot{width:9px;height:9px;border-radius:50%;background:currentColor;opacity:.35;}
+	.ms365cal-chip.is-on .ms365cal-dot{background:var(--cc);opacity:1;}
+	.ms365cal-nav{display:flex;align-items:center;gap:14px;margin-bottom:6px;}
+	.ms365cal-page{width:36px;height:36px;border:1px solid var(--ms-line);border-radius:10px;background:transparent;cursor:pointer;font-size:16px;line-height:1;color:inherit;opacity:.85;transition:background .15s,opacity .15s;}
+	.ms365cal-page:hover{background:var(--ms-soft);opacity:1;}
+	.ms365cal-page:disabled{opacity:.3;cursor:default;}
 	.ms365cal-page:disabled:hover{background:transparent;}
-	.ms365cal-range{font-size:14px;color:#555;font-weight:600;}
+	.ms365cal-range{font-size:14px;font-weight:600;opacity:.7;}
 	.ms365cal-list{position:relative;min-height:60px;}
 	.ms365cal-list.is-loading{opacity:.55;transition:opacity .15s;}
-	.ms365cal-banner{padding:1.5rem 0;text-align:center;color:#777;}
-	.ms365cal-error{padding:1.25rem 0;text-align:center;color:#a3312f;}
-	.ms365cal-error button{margin-left:8px;font-size:13px;padding:3px 10px;border:1px solid var(--b);border-radius:6px;background:transparent;cursor:pointer;}
-	.ms365cal-day{font-size:13px;font-weight:600;color:#555;margin:18px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--b);}
-	.ms365cal-row{display:flex;align-items:flex-start;gap:12px;padding:10px 4px;border-radius:8px;}
-	.ms365cal-row:hover{background:#f7f7f5;}
-	.ms365cal-rail{width:3px;align-self:stretch;border-radius:2px;flex-shrink:0;margin-top:2px;}
-	.ms365cal-body{flex:1;min-width:0;}
-	.ms365cal-ev{font-size:15px;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;color:inherit;font-family:inherit;display:flex;align-items:baseline;gap:7px;width:100%;}
-	.ms365cal-ev:hover .ms365cal-title{text-decoration:underline;}
-	.ms365cal-caret{display:inline-block;flex-shrink:0;font-size:11px;color:#999;transition:transform .15s;}
-	.ms365cal-ev[aria-expanded="true"] .ms365cal-caret{transform:rotate(90deg);}
-	.ms365cal-meta{font-size:12px;color:#888;margin-top:2px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
-	.ms365cal-pill{padding:1px 8px;border-radius:999px;}
-	.ms365cal-recur{color:#555;}
-	.ms365cal-detail{margin-top:8px;padding:10px 12px;background:#f7f7f5;border-radius:8px;font-size:13px;color:#444;}
+	.ms365cal-banner,.ms365cal-empty{padding:1.75rem 0;text-align:center;opacity:.5;}
+	.ms365cal-error{padding:1.25rem 0;text-align:center;color:#c0392b;}
+	.ms365cal-error button{margin-left:8px;font-size:13px;padding:4px 11px;border:1px solid var(--ms-line);border-radius:999px;background:transparent;cursor:pointer;color:inherit;}
+	.ms365cal-day{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;opacity:.5;margin:22px 0 4px;}
+	.ms365cal-day:first-child{margin-top:2px;}
+	.ms365cal-row{display:flex;align-items:stretch;gap:12px;padding:2px 12px;border-radius:12px;transition:background .12s;}
+	.ms365cal-row:hover{background:var(--ms-soft);}
+	.ms365cal-rail{width:4px;border-radius:999px;flex:0 0 auto;margin:11px 0;}
+	.ms365cal-body{flex:1;min-width:0;padding:9px 0;}
+	.ms365cal-ev{font-size:15px;font-weight:600;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;color:inherit;font-family:inherit;display:flex;align-items:baseline;gap:9px;width:100%;line-height:1.35;}
+	.ms365cal-ev:hover .ms365cal-title{opacity:.65;}
+	.ms365cal-title{transition:opacity .12s;}
+	.ms365cal-caret{display:inline-block;flex:0 0 auto;font-size:9px;opacity:.4;transition:transform .15s;transform:translateY(-2px);}
+	.ms365cal-ev[aria-expanded="true"] .ms365cal-caret{transform:translateY(-2px) rotate(90deg);}
+	.ms365cal-meta{font-size:12.5px;margin-top:4px;display:flex;flex-wrap:wrap;gap:9px;align-items:center;}
+	.ms365cal-when{font-weight:600;opacity:.72;font-variant-numeric:tabular-nums;}
+	.ms365cal-pill{padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;line-height:1.5;white-space:nowrap;}
+	.ms365cal-recur,.ms365cal-loc{opacity:.6;}
+	.ms365cal-detail{margin-top:10px;padding:12px 14px;background:var(--ms-soft);border-radius:10px;font-size:13px;line-height:1.65;}
 	.ms365cal-detail div{margin:2px 0;}
-	.ms365cal-detail a{color:#185fa5;text-decoration:none;}
-	.ms365cal-detail a:hover{text-decoration:underline;}
-	.ms365cal-detail-label{color:#888;}
-	.ms365cal-empty{padding:1.5rem 0;text-align:center;color:#999;}
+	.ms365cal-detail div:first-child{margin-top:0;}
+	.ms365cal-detail a{color:#185fa5;font-weight:600;text-decoration:underline;text-underline-offset:2px;}
+	.ms365cal-detail-label{opacity:.5;}
 	</style>
 	<script>
 	(function(){
@@ -1291,11 +1294,11 @@ function ms365cal_assets() {
 				if(e.dayKey!==lastDay){html+='<div class="ms365cal-day">'+esc(e.dayLabel)+'</div>';lastDay=e.dayKey;}
 
 				var recurShort=e.recur?e.recur.replace(/^Repeats\s+/,''):'';
-				var meta='<span>'+esc(e.when)+'</span>'
+				var meta='<span class="ms365cal-when">'+esc(e.when)+'</span>'
 					+'<span class="ms365cal-pill" style="color:'+m.color+';background:'+m.bg+'">'+esc(m.label)+'</span>';
 				if(e.recur)meta+='<span class="ms365cal-recur">\u21bb '+esc(recurShort)+'</span>';
-				if(e.location)meta+='<span>\u00b7 '+esc(e.location)+'</span>';
-				else if(e.online)meta+='<span>\u00b7 Online</span>';
+				if(e.location)meta+='<span class="ms365cal-loc">'+esc(e.location)+'</span>';
+				else if(e.online)meta+='<span class="ms365cal-loc">Online</span>';
 
 				var d='<div>'+esc(e.when)+'</div>';
 				if(e.recur)d+='<div>'+esc(e.recur)+'</div>';
