@@ -1,0 +1,51 @@
+name: Release
+
+# Push a tag like v2.0.1 to cut a release. The job builds a clean, WordPress-
+# installable zip (top folder = plugin slug) and attaches it to a GitHub
+# Release. The plugin's bundled update checker prefers this asset, so wp-admin
+# offers a one-click update once the release is published.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build plugin zip
+        run: |
+          set -euo pipefail
+          SLUG=ms365-merged-calendar
+          rm -rf build
+          mkdir -p "build/$SLUG"
+          rsync -a \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'build' \
+            --exclude 'CLAUDE.md' \
+            --exclude '.gitignore' \
+            --exclude '*.zip' \
+            ./ "build/$SLUG/"
+          (cd build && zip -qr "$GITHUB_WORKSPACE/$SLUG.zip" "$SLUG")
+          echo "Contents:"
+          unzip -l "$SLUG.zip" | tail -n 8
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SLUG=ms365-merged-calendar
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            "$SLUG.zip" \
+          || gh release upload "$GITHUB_REF_NAME" "$SLUG.zip" --clobber

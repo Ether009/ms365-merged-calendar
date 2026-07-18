@@ -1,0 +1,1403 @@
+<?php
+/**
+ * Plugin Name:       MS365 Merged Calendar (Async)
+ * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
+ * Version:           2.0.0
+ * Requires PHP:      7.4
+ * Author:            You
+ * License:           GPL-2.0-or-later
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+define( 'MS365CAL_OPTION', 'ms365cal_settings' );
+define( 'MS365CAL_TOKEN_TRANSIENT', 'ms365cal_token' );
+define( 'MS365CAL_MAX_WINDOW', 62 ); // hard cap on days per request
+define( 'MS365CAL_RATE_MAX', 30 );   // max REST requests per IP per window (0 = disabled)
+define( 'MS365CAL_RATE_WINDOW', 60 ); // rate-limit window, seconds
+define( 'MS365CAL_BACKOFF_MAX', 300 ); // max seconds to pause Graph calls after a 429/503
+define( 'MS365CAL_MAX_PAGES', 20 );    // safety cap on Graph nextLink pages per calendar (×100 events)
+
+/**
+ * ---------------------------------------------------------------------------
+ *  Automatic updates from GitHub (plugin-update-checker)
+ * ---------------------------------------------------------------------------
+ *  One-click updates in wp-admin, driven by GitHub Releases of the public repo
+ *  Ether009/ms365-merged-calendar. The updater library is vendored under
+ *  /plugin-update-checker. If it's absent (e.g. a bare single-file install)
+ *  this is a no-op: the plugin still runs, it just won't self-update. WordPress
+ *  compares each release's plugin "Version:" header against the installed one.
+ */
+function ms365cal_init_updates() {
+	$loader = __DIR__ . '/plugin-update-checker/plugin-update-checker.php';
+	if ( ! is_readable( $loader ) ) {
+		return;
+	}
+	require_once $loader;
+
+	if ( ! class_exists( 'YahnisElsts\\PluginUpdateChecker\\v5\\PucFactory' ) ) {
+		return;
+	}
+
+	$checker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
+		'https://github.com/Ether009/ms365-merged-calendar/',
+		__FILE__,
+		'ms365-merged-calendar'
+	);
+
+	// Prefer a curated release-asset zip when a release has one (the CI build
+	// attaches it); fall back to GitHub's auto-generated source archive.
+	$api = $checker->getVcsApi();
+	if ( method_exists( $api, 'enableReleaseAssets' ) ) {
+		$api->enableReleaseAssets();
+	}
+}
+ms365cal_init_updates();
+
+/**
+ * ---------------------------------------------------------------------------
+ *  Settings
+ * ---------------------------------------------------------------------------
+ *  Credentials may be defined in wp-config.php (they win over DB options):
+ *      define( 'MS365CAL_TENANT_ID', '...' );
+ *      define( 'MS365CAL_CLIENT_ID', '...' );
+ *      define( 'MS365CAL_CLIENT_SECRET', '...' );
+ */
+function ms365cal_get_settings() {
+	$defaults = array(
+		'tenant_id'     => '',
+		'client_id'     => '',
+		'client_secret' => '',
+		'cache_minutes' => 20,
+		'timezone'      => wp_timezone_string(),
+		'rate_max'      => MS365CAL_RATE_MAX,
+		'rate_window'   => MS365CAL_RATE_WINDOW,
+		'show_outlook'  => false,
+		'calendars'     => array(),
+	);
+	$saved    = get_option( MS365CAL_OPTION, array() );
+	return wp_parse_args( is_array( $saved ) ? $saved : array(), $defaults );
+}
+
+function ms365cal_cred( $key ) {
+	$const = 'MS365CAL_' . strtoupper( $key );
+	if ( defined( $const ) && constant( $const ) ) {
+		return constant( $const );
+	}
+	$s = ms365cal_get_settings();
+	return isset( $s[ $key ] ) ? $s[ $key ] : '';
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ *  Graph auth (app-only / client credentials)
+ * ---------------------------------------------------------------------------
+ */
+function ms365cal_get_token() {
+	$cached = get_transient( MS365CAL_TOKEN_TRANSIENT );
+	if ( $cached ) {
+		return $cached;
+	}
+
+	$tenant = ms365cal_cred( 'tenant_id' );
+	$client = ms365cal_cred( 'client_id' );
+	$secret = ms365cal_cred( 'client_secret' );
+
+	if ( ! $tenant || ! $client || ! $secret ) {
+		return new WP_Error( 'ms365cal_no_creds', 'Azure credentials are not configured.' );
+	}
+
+	$resp = wp_remote_post(
+		"https://login.microsoftonline.com/{$tenant}/oauth2/v2.0/token",
+		array(
+			'timeout' => 15,
+			'body'    => array(
+				'grant_type'    => 'client_credentials',
+				'client_id'     => $client,
+				'client_secret' => $secret,
+				'scope'         => 'https://graph.microsoft.com/.default',
+			),
+		)
+	);
+
+	if ( is_wp_error( $resp ) ) {
+		return $resp;
+	}
+
+	$body = json_decode( wp_remote_retrieve_body( $resp ), true );
+	if ( empty( $body['access_token'] ) ) {
+		$msg = isset( $body['error_description'] ) ? $body['error_description'] : 'Token request failed.';
+		return new WP_Error( 'ms365cal_token_failed', $msg );
+	}
+
+	$expires = isset( $body['expires_in'] ) ? (int) $body['expires_in'] : 3600;
+	set_transient( MS365CAL_TOKEN_TRANSIENT, $body['access_token'], max( 60, $expires - 300 ) );
+
+	return $body['access_token'];
+}
+
+/**
+ * Build the calendarView URL. This is the only place group vs. mailbox differs.
+ */
+function ms365cal_view_url( $cal, $start_iso, $end_iso ) {
+	$source = rawurlencode( $cal['source'] );
+	$base   = ( 'mailbox' === $cal['type'] )
+		? "https://graph.microsoft.com/v1.0/users/{$source}/calendarView"
+		: "https://graph.microsoft.com/v1.0/groups/{$source}/calendarView";
+
+	return add_query_arg(
+		array(
+			'startDateTime' => $start_iso,
+			'endDateTime'   => $end_iso,
+			'$orderby'      => 'start/dateTime',
+			'$top'          => 100,
+			'$select'       => 'subject,start,end,location,isAllDay,onlineMeeting,webLink,type,seriesMasterId',
+		),
+		$base
+	);
+}
+
+/**
+ * Base /events URL for a calendar, used to fetch a recurring series master.
+ */
+function ms365cal_events_base( $cal ) {
+	$source = rawurlencode( $cal['source'] );
+	return ( 'mailbox' === $cal['type'] )
+		? "https://graph.microsoft.com/v1.0/users/{$source}/events"
+		: "https://graph.microsoft.com/v1.0/groups/{$source}/events";
+}
+
+/**
+ * Human-readable recurrence summary from a Graph recurrence object, e.g.
+ * "Repeats weekly on Mon, Wed" or "Repeats monthly on day 15 until 1 Dec 2026".
+ */
+function ms365cal_format_recurrence( $rec ) {
+	if ( empty( $rec['pattern']['type'] ) ) {
+		return '';
+	}
+	$p        = $rec['pattern'];
+	$interval = isset( $p['interval'] ) ? max( 1, (int) $p['interval'] ) : 1;
+
+	$abbr = array(
+		'monday'    => 'Mon',
+		'tuesday'   => 'Tue',
+		'wednesday' => 'Wed',
+		'thursday'  => 'Thu',
+		'friday'    => 'Fri',
+		'saturday'  => 'Sat',
+		'sunday'    => 'Sun',
+	);
+	$days = array();
+	if ( ! empty( $p['daysOfWeek'] ) && is_array( $p['daysOfWeek'] ) ) {
+		foreach ( $p['daysOfWeek'] as $d ) {
+			$days[] = isset( $abbr[ strtolower( $d ) ] ) ? $abbr[ strtolower( $d ) ] : ucfirst( $d );
+		}
+	}
+	$day_list = implode( ', ', $days );
+	$index    = isset( $p['index'] ) ? $p['index'] : 'first';
+
+	switch ( $p['type'] ) {
+		case 'daily':
+			$s = $interval > 1 ? "every {$interval} days" : 'daily';
+			break;
+		case 'weekly':
+			$base = $interval > 1 ? "every {$interval} weeks" : 'weekly';
+			$s    = $day_list ? "{$base} on {$day_list}" : $base;
+			break;
+		case 'absoluteMonthly':
+			$base = $interval > 1 ? "every {$interval} months" : 'monthly';
+			$dom  = isset( $p['dayOfMonth'] ) ? (int) $p['dayOfMonth'] : 0;
+			$s    = $dom ? "{$base} on day {$dom}" : $base;
+			break;
+		case 'relativeMonthly':
+			$base = $interval > 1 ? "every {$interval} months" : 'monthly';
+			$s    = trim( "{$base} on the {$index} {$day_list}" );
+			break;
+		case 'absoluteYearly':
+			$s = 'yearly';
+			break;
+		case 'relativeYearly':
+			$s = trim( "yearly on the {$index} {$day_list}" );
+			break;
+		default:
+			$s = 'on a schedule';
+	}
+
+	$label = 'Repeats ' . $s;
+
+	if ( isset( $rec['range']['type'] ) && 'endDate' === $rec['range']['type'] && ! empty( $rec['range']['endDate'] ) ) {
+		$ts = strtotime( $rec['range']['endDate'] );
+		if ( $ts ) {
+			$label .= ' until ' . wp_date( 'j M Y', $ts );
+		}
+	}
+
+	return $label;
+}
+
+/**
+ * Fetch a recurring series master and format its recurrence. Deduplicated and
+ * capped per request so many occurrences of the same series cost one call, and
+ * a pathological window can't fan out into unbounded master fetches.
+ */
+function ms365cal_recurrence_text( $cal, $master_id, $token ) {
+	static $memo    = array();
+	static $fetches = 0;
+
+	$key = $cal['slug'] . '|' . $master_id;
+	if ( isset( $memo[ $key ] ) ) {
+		return $memo[ $key ];
+	}
+	if ( $fetches >= 40 ) {
+		$memo[ $key ] = 'Recurring event';
+		return $memo[ $key ];
+	}
+
+	$url  = add_query_arg( array( '$select' => 'recurrence' ), ms365cal_events_base( $cal ) . '/' . rawurlencode( $master_id ) );
+	$resp = ms365cal_http_get(
+		$url,
+		array(
+			'timeout' => 15,
+			'headers' => array( 'Authorization' => 'Bearer ' . $token ),
+		)
+	);
+	++$fetches;
+
+	$text = '';
+	if ( ! is_wp_error( $resp ) && 200 === (int) wp_remote_retrieve_response_code( $resp ) ) {
+		$b = json_decode( wp_remote_retrieve_body( $resp ), true );
+		if ( isset( $b['recurrence'] ) && is_array( $b['recurrence'] ) ) {
+			$text = ms365cal_format_recurrence( $b['recurrence'] );
+		}
+	}
+	if ( '' === $text ) {
+		$text = 'Recurring event';
+	}
+
+	$memo[ $key ] = $text;
+	return $text;
+}
+
+/**
+ * Compact "when" label for the list, showing the end so multi-day and timed
+ * events don't look like single all-day entries.
+ */
+function ms365cal_when_label( $start, $end, $all_day, $time_fmt ) {
+	if ( $all_day ) {
+		// Graph's all-day end is exclusive midnight, so the last real day is -1.
+		$end_incl = ( clone $end )->modify( '-1 day' );
+		if ( $end_incl->format( 'Y-m-d' ) <= $start->format( 'Y-m-d' ) ) {
+			return 'All day';
+		}
+		return 'All day · ' . wp_date( 'j M', $start->getTimestamp() ) . ' – ' . wp_date( 'j M', $end_incl->getTimestamp() );
+	}
+
+	$s_time = wp_date( $time_fmt, $start->getTimestamp() );
+	$e_time = wp_date( $time_fmt, $end->getTimestamp() );
+
+	if ( $start->format( 'Y-m-d' ) === $end->format( 'Y-m-d' ) ) {
+		return $s_time . ' – ' . $e_time;
+	}
+
+	return wp_date( 'j M', $start->getTimestamp() ) . ' ' . $s_time
+		. ' – ' . wp_date( 'j M', $end->getTimestamp() ) . ' ' . $e_time;
+}
+
+/**
+ * Single Graph GET with one short inline retry for a tiny Retry-After. Longer
+ * throttles fall through to the caller's back-off handling.
+ */
+function ms365cal_http_get( $url, $args ) {
+	$resp = wp_remote_get( $url, $args );
+	if ( ! is_wp_error( $resp ) ) {
+		$code = (int) wp_remote_retrieve_response_code( $resp );
+		if ( 429 === $code || 503 === $code ) {
+			$ra = (int) wp_remote_retrieve_header( $resp, 'retry-after' );
+			if ( $ra > 0 && $ra <= 2 ) {
+				sleep( $ra );
+				$resp = wp_remote_get( $url, $args );
+			}
+		}
+	}
+	return $resp;
+}
+
+/**
+ * Fetch one calendar, following Graph's @odata.nextLink so busy calendars
+ * return everything (up to MS365CAL_MAX_PAGES × page size), not just page one.
+ *
+ * @return array{events:array,throttled:bool,retry_after:int,status:int,error:string}
+ *         'throttled' is true when Graph returned 429/503; 'retry_after' carries
+ *         Graph's Retry-After (seconds) when present. 'status' is the HTTP code
+ *         (0 for a transport error) and 'error' a short reason, both for debug.
+ */
+function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
+	$args = array(
+		'timeout' => 20,
+		'headers' => array(
+			'Authorization' => 'Bearer ' . $token,
+			'Prefer'        => 'outlook.timezone="' . $tz . '"',
+		),
+	);
+
+	try {
+		$zone = new DateTimeZone( $tz );
+	} catch ( Exception $e ) {
+		$zone = new DateTimeZone( 'UTC' );
+	}
+	$time_fmt = get_option( 'time_format', 'H:i' );
+
+	try {
+		$window_start = new DateTime( $start_iso, $zone );
+	} catch ( Exception $e ) {
+		$window_start = new DateTime( 'now', $zone );
+	}
+
+	$out  = array();
+	$url  = ms365cal_view_url( $cal, $start_iso, $end_iso );
+	$page = 0;
+
+	while ( $url && $page < MS365CAL_MAX_PAGES ) {
+		++$page;
+		$resp = ms365cal_http_get( $url, $args );
+
+		if ( is_wp_error( $resp ) ) {
+			return array(
+				'events'      => array(),
+				'throttled'   => false,
+				'retry_after' => 0,
+				'status'      => 0,
+				'error'       => $resp->get_error_message(),
+			);
+		}
+
+		$code = (int) wp_remote_retrieve_response_code( $resp );
+
+		if ( 429 === $code || 503 === $code ) {
+			$ra = (int) wp_remote_retrieve_header( $resp, 'retry-after' );
+			return array(
+				'events'      => array(),
+				'throttled'   => true,
+				'retry_after' => $ra > 0 ? $ra : 30,
+				'status'      => $code,
+				'error'       => '',
+			);
+		}
+
+		if ( 200 !== $code ) {
+			// 403/404/etc. — no events, but not a throttle. Capture Graph's reason.
+			$err_body = json_decode( wp_remote_retrieve_body( $resp ), true );
+			$err_msg  = isset( $err_body['error']['message'] )
+				? $err_body['error']['message']
+				: substr( (string) wp_remote_retrieve_body( $resp ), 0, 300 );
+			return array(
+				'events'      => array(),
+				'throttled'   => false,
+				'retry_after' => 0,
+				'status'      => $code,
+				'error'       => $err_msg,
+			);
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
+
+		if ( ! empty( $body['value'] ) && is_array( $body['value'] ) ) {
+			foreach ( $body['value'] as $e ) {
+				$raw_start = isset( $e['start']['dateTime'] ) ? $e['start']['dateTime'] : '';
+				if ( '' === $raw_start ) {
+					continue;
+				}
+				try {
+					$st = new DateTime( $raw_start, $zone );
+				} catch ( Exception $ex ) {
+					continue;
+				}
+
+				$en      = null;
+				$raw_end = isset( $e['end']['dateTime'] ) ? $e['end']['dateTime'] : '';
+				if ( '' !== $raw_end ) {
+					try {
+						$en = new DateTime( $raw_end, $zone );
+					} catch ( Exception $ex ) {
+						$en = null;
+					}
+				}
+
+				$allday = ! empty( $e['isAllDay'] );
+
+				// Ongoing events that began before the window group under the window
+				// start (today) rather than a past date, but keep their real span.
+				$eff = ( $st < $window_start ) ? clone $window_start : $st;
+
+				$when = $en
+					? ms365cal_when_label( $st, $en, $allday, $time_fmt )
+					: ( $allday ? 'All day' : wp_date( $time_fmt, $st->getTimestamp() ) );
+
+				// Recurrence: calendarView returns expanded occurrences; the pattern
+				// lives on the series master, which we fetch once per series.
+				$recur     = '';
+				$master_id = isset( $e['seriesMasterId'] ) ? $e['seriesMasterId'] : '';
+				$etype     = isset( $e['type'] ) ? $e['type'] : '';
+				if ( '' !== $master_id ) {
+					$recur = ms365cal_recurrence_text( $cal, $master_id, $token );
+				} elseif ( in_array( $etype, array( 'occurrence', 'exception' ), true ) ) {
+					$recur = 'Recurring event';
+				}
+
+				$out[] = array(
+					'cal'      => $cal['slug'],
+					'title'    => isset( $e['subject'] ) && '' !== $e['subject'] ? $e['subject'] : '(no subject)',
+					'sort'     => $eff->format( 'Y-m-d\TH:i:s' ),
+					'dayKey'   => $eff->format( 'Y-m-d' ),
+					'dayLabel' => wp_date( 'D j M', $eff->getTimestamp() ),
+					'when'     => $when,
+					'recur'    => $recur,
+					'location' => isset( $e['location']['displayName'] ) ? $e['location']['displayName'] : '',
+					'online'   => ! empty( $e['onlineMeeting'] ),
+					'joinUrl'  => isset( $e['onlineMeeting']['joinUrl'] ) ? $e['onlineMeeting']['joinUrl'] : '',
+					'link'     => isset( $e['webLink'] ) ? $e['webLink'] : '',
+				);
+			}
+		}
+
+		// Follow pagination. The nextLink is an absolute URL carrying the skiptoken
+		// plus the original $select/$top, so pass it through unchanged.
+		$url = isset( $body['@odata.nextLink'] ) ? $body['@odata.nextLink'] : '';
+	}
+
+	return array(
+		'events'      => $out,
+		'throttled'   => false,
+		'retry_after' => 0,
+		'status'      => 200,
+		'error'       => '',
+	);
+}
+
+/**
+ * Merge + sort + cache a window of events for a set of calendar slugs.
+ *
+ * @return array|WP_Error
+ */
+function ms365cal_events_window( $slugs, $start_date, $days ) {
+	$settings = ms365cal_get_settings();
+	$tz       = $settings['timezone'] ? $settings['timezone'] : 'UTC';
+	$days     = min( MS365CAL_MAX_WINDOW, max( 1, (int) $days ) );
+
+	$wanted = array_values(
+		array_filter(
+			$settings['calendars'],
+			function ( $c ) use ( $slugs ) {
+				return in_array( $c['slug'], $slugs, true );
+			}
+		)
+	);
+	if ( empty( $wanted ) ) {
+		return array();
+	}
+
+	// Normalise the window to whole days in site tz.
+	try {
+		$zone  = new DateTimeZone( $tz );
+		$start = DateTime::createFromFormat( 'Y-m-d', $start_date, $zone );
+		if ( ! $start ) {
+			$start = new DateTime( 'now', $zone );
+		}
+		$start->setTime( 0, 0, 0 );
+		$end = ( clone $start )->modify( '+' . $days . ' days' );
+	} catch ( Exception $e ) {
+		return new WP_Error( 'ms365cal_tz', 'Invalid timezone.' );
+	}
+
+	$start_iso = $start->format( 'Y-m-d\TH:i:s' );
+	$end_iso   = $end->format( 'Y-m-d\TH:i:s' );
+
+	$cache_key = 'ms365cal_w_' . md5( implode( ',', $slugs ) . '|' . $start_iso . '|' . $days . '|' . $tz );
+
+	$now       = time();
+	$fresh     = max( 1, (int) $settings['cache_minutes'] ) * MINUTE_IN_SECONDS;
+	$cached    = get_transient( $cache_key ); // stored payload with fetched-time + events, or false
+	$has_stale = is_array( $cached ) && isset( $cached['events'] );
+
+	// Fresh cache hit.
+	if ( $has_stale && ( $now - (int) $cached['fetched'] ) < $fresh ) {
+		return $cached['events'];
+	}
+
+	// Graph asked us to back off recently — don't call it again yet. Serve stale
+	// data if we have any; otherwise report the throttle so the client can wait.
+	$backoff_until = (int) get_transient( 'ms365cal_backoff' );
+	if ( $backoff_until > $now ) {
+		if ( $has_stale ) {
+			return $cached['events'];
+		}
+		return new WP_Error( 'ms365cal_throttled', 'The calendar service is busy.', array( 'retry_after' => $backoff_until - $now ) );
+	}
+
+	$token = ms365cal_get_token();
+	if ( is_wp_error( $token ) ) {
+		return $has_stale ? $cached['events'] : $token;
+	}
+
+	$all         = array();
+	$throttled   = false;
+	$retry_after = 30;
+	foreach ( $wanted as $cal ) {
+		$res = ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz );
+		if ( ! empty( $res['throttled'] ) ) {
+			// Graph throttles per app/tenant, so once one call is limited the rest
+			// will be too — stop and don't pile on more requests.
+			$throttled   = true;
+			$retry_after = (int) $res['retry_after'];
+			break;
+		}
+		$all = array_merge( $all, $res['events'] );
+	}
+
+	if ( $throttled ) {
+		$backoff = max( 1, min( $retry_after, MS365CAL_BACKOFF_MAX ) );
+		set_transient( 'ms365cal_backoff', $now + $backoff, $backoff );
+		if ( $has_stale ) {
+			return $cached['events']; // seamless: slightly old data beats a blank calendar
+		}
+		return new WP_Error( 'ms365cal_throttled', 'The calendar service is busy.', array( 'retry_after' => $backoff ) );
+	}
+
+	usort(
+		$all,
+		function ( $a, $b ) {
+			return strcmp( $a['sort'], $b['sort'] );
+		}
+	);
+
+	// Keep well past the freshness window so stale data stays available to serve
+	// during a throttle or outage.
+	$keep = max( $fresh, DAY_IN_SECONDS );
+	set_transient(
+		$cache_key,
+		array(
+			'fetched' => $now,
+			'events'  => $all,
+		),
+		$keep
+	);
+	return $all;
+}
+
+/**
+ * Decode the (unverified) claims from a JWT payload. We only read what our own
+ * token already contains — no signature check needed — to show the application
+ * roles the token actually carries. Returns an associative array of claims.
+ */
+function ms365cal_decode_jwt_claims( $jwt ) {
+	$parts = explode( '.', (string) $jwt );
+	if ( count( $parts ) < 2 ) {
+		return array();
+	}
+	$payload = strtr( $parts[1], '-_', '+/' );
+	$pad     = strlen( $payload ) % 4;
+	if ( $pad ) {
+		$payload .= str_repeat( '=', 4 - $pad );
+	}
+	// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+	$json = base64_decode( $payload );
+	$data = json_decode( (string) $json, true );
+	return is_array( $data ) ? $data : array();
+}
+
+/**
+ * Drop the cached Graph token, the back-off flag, and all window event caches so
+ * the next fetch starts from a blank slate. The debug endpoint calls this to
+ * force a brand-new token after a permissions/consent change, rather than
+ * reusing a token that was minted before consent (which carries no roles).
+ */
+function ms365cal_flush_cache() {
+	global $wpdb;
+
+	// Exact-key deletes — these work even under a persistent object cache, so the
+	// token concern is always covered.
+	delete_transient( MS365CAL_TOKEN_TRANSIENT );
+	delete_transient( 'ms365cal_backoff' );
+
+	// Window event caches use dynamic keys, so clear them by prefix. Best-effort:
+	// on a persistent object cache this DB sweep won't reach cached copies, but
+	// the diagnostic reads live anyway and the token above is what matters.
+	$like_val = $wpdb->esc_like( '_transient_ms365cal_w_' ) . '%';
+	$like_to  = $wpdb->esc_like( '_transient_timeout_ms365cal_w_' ) . '%';
+	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+	$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s", $like_val, $like_to ) );
+}
+
+/**
+ * Admin-only diagnostic: fetch each configured calendar live (bypassing the
+ * cache and the back-off) and report the real Graph status, so a 403/404 that
+ * the normal path swallows becomes visible. Returns array|WP_Error.
+ */
+function ms365cal_diagnose( $slugs, $start_date, $days ) {
+	$settings = ms365cal_get_settings();
+	$tz       = $settings['timezone'] ? $settings['timezone'] : 'UTC';
+	$days     = min( MS365CAL_MAX_WINDOW, max( 1, (int) $days ) );
+
+	$wanted = array_values(
+		array_filter(
+			$settings['calendars'],
+			function ( $c ) use ( $slugs ) {
+				return in_array( $c['slug'], $slugs, true );
+			}
+		)
+	);
+
+	try {
+		$zone  = new DateTimeZone( $tz );
+		$start = DateTime::createFromFormat( 'Y-m-d', $start_date, $zone );
+		if ( ! $start ) {
+			$start = new DateTime( 'now', $zone );
+		}
+		$start->setTime( 0, 0, 0 );
+		$end = ( clone $start )->modify( '+' . $days . ' days' );
+	} catch ( Exception $e ) {
+		return new WP_Error( 'ms365cal_tz', 'Invalid timezone.' );
+	}
+
+	$start_iso = $start->format( 'Y-m-d\TH:i:s' );
+	$end_iso   = $end->format( 'Y-m-d\TH:i:s' );
+
+	$out = array(
+		'window'    => array(
+			'start' => $start_iso,
+			'end'   => $end_iso,
+			'tz'    => $tz,
+		),
+		'token'     => 'ok',
+		'calendars' => array(),
+	);
+
+	if ( empty( $wanted ) ) {
+		$out['token'] = 'no calendars configured';
+		return $out;
+	}
+
+	$token = ms365cal_get_token();
+	if ( is_wp_error( $token ) ) {
+		$out['token'] = $token->get_error_message();
+		return $out;
+	}
+
+	// Surface the application roles the token carries. Empty here == the app has
+	// no consented Application permissions, which is the usual cause of a blanket
+	// "Access is denied" from Exchange even though a token was issued.
+	$claims                = ms365cal_decode_jwt_claims( $token );
+	$out['token_roles']    = isset( $claims['roles'] ) ? $claims['roles'] : array();
+	$out['token_audience'] = isset( $claims['aud'] ) ? $claims['aud'] : '';
+
+	foreach ( $wanted as $cal ) {
+		$res                = ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz );
+		$out['calendars'][] = array(
+			'slug'      => $cal['slug'],
+			'type'      => $cal['type'],
+			'source'    => $cal['source'],
+			'http'      => isset( $res['status'] ) ? (int) $res['status'] : null,
+			'events'    => count( $res['events'] ),
+			'throttled' => ! empty( $res['throttled'] ),
+			'error'     => isset( $res['error'] ) ? $res['error'] : '',
+		);
+	}
+
+	return $out;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ *  REST endpoint:  GET /wp-json/ms365cal/v1/events?cals=eng,sales&start=2026-07-17&days=14
+ * ---------------------------------------------------------------------------
+ *  Public (the host page is public). The browser passes calendar *slugs*,
+ *  never Graph identifiers, and only configured slugs are ever queried.
+ *
+ *  Add &debug=1 as a logged-in admin to get per-calendar Graph status instead.
+ */
+function ms365cal_register_rest() {
+	register_rest_route(
+		'ms365cal/v1',
+		'/events',
+		array(
+			'methods'             => 'GET',
+			'permission_callback' => '__return_true',
+			'args'                => array(
+				'cals'  => array( 'sanitize_callback' => 'sanitize_text_field' ),
+				'start' => array( 'sanitize_callback' => 'sanitize_text_field' ),
+				'days'  => array( 'sanitize_callback' => 'absint' ),
+				'debug' => array( 'sanitize_callback' => 'absint' ),
+			),
+			'callback'            => 'ms365cal_rest_events',
+		)
+	);
+}
+add_action( 'rest_api_init', 'ms365cal_register_rest' );
+
+/**
+ * Best-effort client IP. Uses REMOTE_ADDR only — X-Forwarded-For is spoofable,
+ * which would let a caller bypass the limit. If your site sits behind a trusted
+ * reverse proxy/CDN, resolve the real client IP into REMOTE_ADDR at that layer
+ * (or filter 'ms365cal_client_ip').
+ */
+function ms365cal_client_ip() {
+	$ip = isset( $_SERVER['REMOTE_ADDR'] ) ? trim( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+	if ( ! filter_var( $ip, FILTER_VALIDATE_IP ) ) {
+		$ip = 'unknown';
+	}
+	return apply_filters( 'ms365cal_client_ip', $ip );
+}
+
+/**
+ * Effective rate-limit values. Precedence: filter overrides the saved admin
+ * setting, which defaults to the MS365CAL_RATE_* constants on a fresh install.
+ *
+ * @return array{max:int,window:int}
+ */
+function ms365cal_rate_limits() {
+	$s = ms365cal_get_settings();
+	return array(
+		'max'    => (int) apply_filters( 'ms365cal_rate_max', (int) $s['rate_max'] ),
+		'window' => (int) apply_filters( 'ms365cal_rate_window', (int) $s['rate_window'] ),
+	);
+}
+
+/**
+ * Fixed-window per-IP throttle backed by a transient.
+ *
+ * @return bool True if the request is allowed, false if over the limit.
+ */
+function ms365cal_rate_check() {
+	$limits = ms365cal_rate_limits();
+	$max    = $limits['max'];
+	$window = max( 1, $limits['window'] );
+	if ( $max <= 0 ) {
+		return true; // limiter disabled
+	}
+
+	$key   = 'ms365cal_rl_' . md5( ms365cal_client_ip() );
+	$count = (int) get_transient( $key );
+
+	if ( $count >= $max ) {
+		return false;
+	}
+
+	// Sliding window: each allowed hit refreshes the TTL, so the caller stays
+	// counted until they pause for a full window. Normal browsing (a handful of
+	// clicks) never approaches the limit.
+	set_transient( $key, $count + 1, $window );
+	return true;
+}
+
+function ms365cal_rest_events( WP_REST_Request $req ) {
+	if ( ! ms365cal_rate_check() ) {
+		$limits = ms365cal_rate_limits();
+		$resp   = new WP_REST_Response( array( 'error' => 'rate_limited' ), 429 );
+		$resp->header( 'Retry-After', (string) max( 1, $limits['window'] ) );
+		return $resp;
+	}
+
+	$settings   = ms365cal_get_settings();
+	$configured = wp_list_pluck( $settings['calendars'], 'slug' );
+
+	$req_slugs = array_filter( array_map( 'sanitize_title', explode( ',', (string) $req->get_param( 'cals' ) ) ) );
+	$slugs     = array_values( array_intersect( $req_slugs, $configured ) );
+	if ( empty( $slugs ) ) {
+		$slugs = $configured; // default to all
+	}
+
+	$start = (string) $req->get_param( 'start' );
+	if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $start ) ) {
+		$start = wp_date( 'Y-m-d' );
+	}
+
+	$days = $req->get_param( 'days' ) ? (int) $req->get_param( 'days' ) : 14;
+
+	// Admin-only diagnostic. Non-admins passing debug=1 fall through to normal output.
+	if ( $req->get_param( 'debug' ) && current_user_can( 'manage_options' ) ) {
+		ms365cal_flush_cache(); // start from a blank slate: fresh token + fresh fetch
+		$diag = ms365cal_diagnose( $slugs, $start, $days );
+		if ( is_wp_error( $diag ) ) {
+			return new WP_REST_Response( array( 'error' => $diag->get_error_message() ), 200 );
+		}
+		$diag['flushed'] = true;
+		return new WP_REST_Response( array( 'debug' => $diag ), 200 );
+	}
+
+	$events = ms365cal_events_window( $slugs, $start, $days );
+	if ( is_wp_error( $events ) ) {
+		if ( 'ms365cal_throttled' === $events->get_error_code() ) {
+			$data = $events->get_error_data();
+			$ra   = isset( $data['retry_after'] ) ? max( 1, (int) $data['retry_after'] ) : 30;
+			$resp = new WP_REST_Response(
+				array(
+					'error'       => 'upstream_busy',
+					'retry_after' => $ra,
+				),
+				429
+			);
+			$resp->header( 'Retry-After', (string) $ra );
+			return $resp;
+		}
+		return new WP_REST_Response(
+			array( 'error' => current_user_can( 'manage_options' ) ? $events->get_error_message() : 'unavailable' ),
+			503
+		);
+	}
+
+	return new WP_REST_Response( array( 'events' => $events ), 200 );
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ *  Colour helper
+ * ---------------------------------------------------------------------------
+ */
+function ms365cal_rgba( $hex, $alpha ) {
+	$hex = ltrim( $hex, '#' );
+	if ( 3 === strlen( $hex ) ) {
+		$hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+	}
+	if ( 6 !== strlen( $hex ) ) {
+		$hex = '888888';
+	}
+	return sprintf(
+		'rgba(%d,%d,%d,%s)',
+		hexdec( substr( $hex, 0, 2 ) ),
+		hexdec( substr( $hex, 2, 2 ) ),
+		hexdec( substr( $hex, 4, 2 ) ),
+		$alpha
+	);
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ *  Shortcode — renders the shell only. Events load async via the REST route.
+ *  [ms365_calendar calendars="eng,sales" days="14"]
+ * ---------------------------------------------------------------------------
+ */
+function ms365cal_shortcode( $atts ) {
+	$settings = ms365cal_get_settings();
+	$all_cals = $settings['calendars'];
+
+	if ( empty( $all_cals ) ) {
+		return '<p>No calendars configured yet. Add some under Settings &rarr; MS365 Calendar.</p>';
+	}
+
+	$atts = shortcode_atts(
+		array(
+			'calendars' => '',
+			'days'      => 14,
+		),
+		$atts,
+		'ms365_calendar'
+	);
+
+	if ( '' === trim( $atts['calendars'] ) ) {
+		$slugs = wp_list_pluck( $all_cals, 'slug' );
+	} else {
+		$slugs = array_map( 'trim', explode( ',', $atts['calendars'] ) );
+	}
+
+	$scoped = array_values(
+		array_filter(
+			$all_cals,
+			function ( $c ) use ( $slugs ) {
+				return in_array( $c['slug'], $slugs, true );
+			}
+		)
+	);
+	if ( empty( $scoped ) ) {
+		return '<p>None of the requested calendars exist.</p>';
+	}
+
+	$window = min( MS365CAL_MAX_WINDOW, max( 1, (int) $atts['days'] ) );
+	$tz     = $settings['timezone'] ? $settings['timezone'] : 'UTC';
+
+	// Today, in the site timezone, as the initial window start.
+	try {
+		$today = new DateTime( 'now', new DateTimeZone( $tz ) );
+	} catch ( Exception $e ) {
+		$today = new DateTime( 'now' );
+	}
+
+	$meta     = array();
+	$defaults = array();
+	foreach ( $scoped as $c ) {
+		$meta[ $c['slug'] ]     = array(
+			'label' => $c['label'],
+			'color' => $c['color'],
+			'bg'    => ms365cal_rgba( $c['color'], 0.12 ),
+		);
+		$defaults[ $c['slug'] ] = ! isset( $c['default'] ) || $c['default'];
+	}
+
+	$config = array(
+		'rest'        => esc_url_raw( rest_url( 'ms365cal/v1/events' ) ),
+		'cals'        => wp_list_pluck( $scoped, 'slug' ),
+		'meta'        => $meta,
+		'defaults'    => $defaults,
+		'windowDays'  => $window,
+		'startY'      => (int) $today->format( 'Y' ),
+		'startM'      => (int) $today->format( 'n' ),
+		'startD'      => (int) $today->format( 'j' ),
+		'showOutlook' => ! empty( $settings['show_outlook'] ),
+	);
+
+	$uid = 'ms365cal-' . wp_generate_password( 6, false, false );
+
+	ob_start();
+	?>
+	<div class="ms365cal" id="<?php echo esc_attr( $uid ); ?>" data-config='<?php echo esc_attr( wp_json_encode( $config ) ); ?>'>
+		<div class="ms365cal-bar">
+			<span class="ms365cal-title">Team calendars</span>
+			<span>
+				<button type="button" class="ms365cal-act" data-act="all">Select all</button>
+				<button type="button" class="ms365cal-act" data-act="none">Clear</button>
+			</span>
+		</div>
+
+		<div class="ms365cal-chips"></div>
+
+		<div class="ms365cal-nav">
+			<button type="button" class="ms365cal-page" data-dir="-1" aria-label="Previous days">&larr;</button>
+			<span class="ms365cal-range"></span>
+			<button type="button" class="ms365cal-page" data-dir="1" aria-label="Next days">&rarr;</button>
+		</div>
+
+		<div class="ms365cal-list" aria-live="polite">
+			<div class="ms365cal-banner">Loading calendars&hellip;</div>
+		</div>
+	</div>
+	<?php
+	return ob_get_clean();
+}
+add_shortcode( 'ms365_calendar', 'ms365cal_shortcode' );
+
+/**
+ * Front-end CSS + JS.
+ */
+function ms365cal_assets() {
+	?>
+	<style>
+	.ms365cal{--b:#e2e2df;font-size:15px;line-height:1.5;}
+	.ms365cal-bar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
+	.ms365cal-title{font-weight:600;}
+	.ms365cal-act{font-size:13px;padding:4px 10px;margin-left:6px;background:transparent;border:1px solid var(--b);border-radius:6px;cursor:pointer;}
+	.ms365cal-act:hover{background:#f5f5f3;}
+	.ms365cal-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
+	.ms365cal-chip{display:inline-flex;align-items:center;gap:7px;font-size:13px;padding:5px 11px;border-radius:999px;cursor:pointer;border:1px solid var(--b);background:transparent;color:#888;}
+	.ms365cal-chip.is-on{border-color:var(--cc);background:var(--cbg);color:#333;}
+	.ms365cal-dot{width:9px;height:9px;border-radius:50%;background:#ccc;}
+	.ms365cal-chip.is-on .ms365cal-dot{background:var(--cc);}
+	.ms365cal-nav{display:flex;align-items:center;gap:14px;margin-bottom:8px;}
+	.ms365cal-page{width:34px;height:34px;border:1px solid var(--b);border-radius:8px;background:transparent;cursor:pointer;font-size:16px;line-height:1;}
+	.ms365cal-page:hover{background:#f5f5f3;}
+	.ms365cal-page:disabled{opacity:.4;cursor:default;}
+	.ms365cal-page:disabled:hover{background:transparent;}
+	.ms365cal-range{font-size:14px;color:#555;font-weight:600;}
+	.ms365cal-list{position:relative;min-height:60px;}
+	.ms365cal-list.is-loading{opacity:.55;transition:opacity .15s;}
+	.ms365cal-banner{padding:1.5rem 0;text-align:center;color:#777;}
+	.ms365cal-error{padding:1.25rem 0;text-align:center;color:#a3312f;}
+	.ms365cal-error button{margin-left:8px;font-size:13px;padding:3px 10px;border:1px solid var(--b);border-radius:6px;background:transparent;cursor:pointer;}
+	.ms365cal-day{font-size:13px;font-weight:600;color:#555;margin:18px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--b);}
+	.ms365cal-row{display:flex;align-items:flex-start;gap:12px;padding:10px 4px;border-radius:8px;}
+	.ms365cal-row:hover{background:#f7f7f5;}
+	.ms365cal-rail{width:3px;align-self:stretch;border-radius:2px;flex-shrink:0;margin-top:2px;}
+	.ms365cal-body{flex:1;min-width:0;}
+	.ms365cal-ev{font-size:15px;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;color:inherit;font-family:inherit;display:flex;align-items:baseline;gap:7px;width:100%;}
+	.ms365cal-ev:hover .ms365cal-title{text-decoration:underline;}
+	.ms365cal-caret{display:inline-block;flex-shrink:0;font-size:11px;color:#999;transition:transform .15s;}
+	.ms365cal-ev[aria-expanded="true"] .ms365cal-caret{transform:rotate(90deg);}
+	.ms365cal-meta{font-size:12px;color:#888;margin-top:2px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+	.ms365cal-pill{padding:1px 8px;border-radius:999px;}
+	.ms365cal-recur{color:#555;}
+	.ms365cal-detail{margin-top:8px;padding:10px 12px;background:#f7f7f5;border-radius:8px;font-size:13px;color:#444;}
+	.ms365cal-detail div{margin:2px 0;}
+	.ms365cal-detail a{color:#185fa5;text-decoration:none;}
+	.ms365cal-detail a:hover{text-decoration:underline;}
+	.ms365cal-detail-label{color:#888;}
+	.ms365cal-empty{padding:1.5rem 0;text-align:center;color:#999;}
+	</style>
+	<script>
+	(function(){
+	function esc(s){var d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML;}
+	function pad(n){return (n<10?'0':'')+n;}
+	function iso(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
+	function fmt(d){return d.toLocaleDateString(undefined,{day:'numeric',month:'short'});}
+
+	function initCal(root){
+		var cfg;
+		try{cfg=JSON.parse(root.getAttribute('data-config'));}catch(e){return;}
+
+		var listEl  = root.querySelector('.ms365cal-list');
+		var chipsEl = root.querySelector('.ms365cal-chips');
+		var rangeEl = root.querySelector('.ms365cal-range');
+
+		var enabled = {};
+		cfg.cals.forEach(function(s){enabled[s]=!!cfg.defaults[s];});
+
+		var cache = {};                                   // window key -> events[]
+		var start = new Date(cfg.startY, cfg.startM-1, cfg.startD);
+		var days  = cfg.windowDays;
+		var reqId = 0;
+		var retryTimer = null;
+		var throttleRetries = 0;
+		var MAX_THROTTLE_RETRIES = 3;
+		var openDetail = null;
+
+		function winKey(){return iso(start)+'|'+days;}
+		function updateRange(){
+			var end=new Date(start);end.setDate(end.getDate()+days-1);
+			rangeEl.textContent=fmt(start)+' \u2013 '+fmt(end);
+		}
+
+		function renderChips(){
+			chipsEl.innerHTML='';
+			cfg.cals.forEach(function(slug){
+				var m=cfg.meta[slug],on=enabled[slug];
+				var b=document.createElement('button');
+				b.type='button';
+				b.className='ms365cal-chip'+(on?' is-on':'');
+				b.style.setProperty('--cc',m.color);
+				b.style.setProperty('--cbg',m.bg);
+				b.innerHTML='<span class="ms365cal-dot"></span>'+esc(m.label);
+				b.addEventListener('click',function(){enabled[slug]=!enabled[slug];b.classList.toggle('is-on');paint();});
+				chipsEl.appendChild(b);
+			});
+		}
+
+		function paint(){
+			openDetail=null;
+			var events=cache[winKey()]||[];
+			var visible=events.filter(function(e){return enabled[e.cal];});
+			if(!visible.length){
+				listEl.innerHTML='<p class="ms365cal-empty">No events in this window.</p>';
+				return;
+			}
+			var html='',lastDay='';
+			visible.forEach(function(e){
+				var m=cfg.meta[e.cal];if(!m)return;
+				if(e.dayKey!==lastDay){html+='<div class="ms365cal-day">'+esc(e.dayLabel)+'</div>';lastDay=e.dayKey;}
+
+				var recurShort=e.recur?e.recur.replace(/^Repeats\s+/,''):'';
+				var meta='<span>'+esc(e.when)+'</span>'
+					+'<span class="ms365cal-pill" style="color:'+m.color+';background:'+m.bg+'">'+esc(m.label)+'</span>';
+				if(e.recur)meta+='<span class="ms365cal-recur">\u21bb '+esc(recurShort)+'</span>';
+				if(e.location)meta+='<span>\u00b7 '+esc(e.location)+'</span>';
+				else if(e.online)meta+='<span>\u00b7 Online</span>';
+
+				var d='<div>'+esc(e.when)+'</div>';
+				if(e.recur)d+='<div>'+esc(e.recur)+'</div>';
+				if(e.location)d+='<div><span class="ms365cal-detail-label">Location:</span> '+esc(e.location)+'</div>';
+				if(e.joinUrl)d+='<div><a href="'+esc(e.joinUrl)+'" target="_blank" rel="noopener">Join online meeting</a></div>';
+				else if(e.online)d+='<div>Online meeting</div>';
+				if(cfg.showOutlook&&e.link)d+='<div><a href="'+esc(e.link)+'" target="_blank" rel="noopener">Open in Outlook \u2197</a></div>';
+
+				html+='<div class="ms365cal-row">'
+					+'<div class="ms365cal-rail" style="background:'+m.color+'"></div>'
+					+'<div class="ms365cal-body">'
+						+'<button type="button" class="ms365cal-ev" aria-expanded="false">'
+							+'<span class="ms365cal-caret">\u25b8</span>'
+							+'<span class="ms365cal-title">'+esc(e.title)+'</span>'
+						+'</button>'
+						+'<div class="ms365cal-meta">'+meta+'</div>'
+						+'<div class="ms365cal-detail" hidden>'+d+'</div>'
+					+'</div>'
+				+'</div>';
+			});
+			listEl.innerHTML=html;
+		}
+
+		// Expand/collapse event details — accordion: at most one open at a time.
+		listEl.addEventListener('click',function(ev){
+			var btn=ev.target.closest('.ms365cal-ev');
+			if(!btn||!listEl.contains(btn))return;
+			var detail=btn.parentNode.querySelector('.ms365cal-detail');
+			if(!detail)return;
+			if(openDetail===detail){
+				detail.hidden=true;btn.setAttribute('aria-expanded','false');openDetail=null;return;
+			}
+			if(openDetail){
+				openDetail.hidden=true;
+				var prev=openDetail.parentNode.querySelector('.ms365cal-ev');
+				if(prev)prev.setAttribute('aria-expanded','false');
+			}
+			detail.hidden=false;btn.setAttribute('aria-expanded','true');openDetail=detail;
+		});
+
+		function load(){
+			if(retryTimer){clearTimeout(retryTimer);retryTimer=null;}
+			updateRange();
+			var key=winKey();
+			if(cache[key]){paint();return;}          // client-side window cache hit
+
+			var my=++reqId;
+			listEl.classList.add('is-loading');
+			if(!listEl.querySelector('.ms365cal-row')){
+				listEl.innerHTML='<div class="ms365cal-banner">Loading calendars\u2026</div>';
+			}
+
+			var url=cfg.rest+'?cals='+encodeURIComponent(cfg.cals.join(','))
+				+'&start='+iso(start)+'&days='+days;
+
+			fetch(url,{headers:{'Accept':'application/json'}})
+				.then(function(r){
+					if(r.status===429){
+						var ra=parseInt(r.headers.get('Retry-After')||'0',10);
+						var e=new Error('429');e.retryAfter=(ra>0?ra:30);throw e;
+					}
+					if(!r.ok)throw new Error(r.status);
+					return r.json();
+				})
+				.then(function(data){
+					if(my!==reqId)return;                // a newer request superseded this
+					throttleRetries=0;
+					cache[key]=data.events||[];
+					listEl.classList.remove('is-loading');
+					paint();
+				})
+				.catch(function(err){
+					if(my!==reqId)return;
+					listEl.classList.remove('is-loading');
+
+					if(''+err.message==='429'){
+						var wait=Math.min(err.retryAfter||30,120);
+						var auto=throttleRetries<MAX_THROTTLE_RETRIES;
+						listEl.innerHTML='<p class="ms365cal-error">Busy right now \u2014 '
+							+(auto?'retrying in '+wait+'s\u2026':'please try again shortly.')
+							+'<button type="button" class="ms365cal-retry">Retry now</button></p>';
+						var rb=listEl.querySelector('.ms365cal-retry');
+						if(rb)rb.addEventListener('click',function(){throttleRetries=0;load();});
+						if(auto){
+							throttleRetries++;
+							retryTimer=setTimeout(load,wait*1000);
+						}
+						return;
+					}
+
+					listEl.innerHTML='<p class="ms365cal-error">Couldn\u2019t load the calendar.'
+						+'<button type="button" class="ms365cal-retry">Retry</button></p>';
+					var rb2=listEl.querySelector('.ms365cal-retry');
+					if(rb2)rb2.addEventListener('click',load);
+				});
+		}
+
+		var COOLDOWN=600; // ms
+		var pageBtns=root.querySelectorAll('.ms365cal-page');
+		function setPaging(disabled){pageBtns.forEach(function(b){b.disabled=disabled;});}
+
+		pageBtns.forEach(function(btn){
+			btn.addEventListener('click',function(){
+				if(btn.disabled)return;
+				setPaging(true);
+				start.setDate(start.getDate()+parseInt(btn.getAttribute('data-dir'),10)*days);
+				load();
+				setTimeout(function(){setPaging(false);},COOLDOWN);
+			});
+		});
+		root.querySelectorAll('.ms365cal-act').forEach(function(btn){
+			btn.addEventListener('click',function(){
+				var on=btn.getAttribute('data-act')==='all';
+				cfg.cals.forEach(function(s){enabled[s]=on;});
+				renderChips();paint();
+			});
+		});
+
+		renderChips();
+		load();
+	}
+
+	document.querySelectorAll('.ms365cal').forEach(initCal);
+	})();
+	</script>
+	<?php
+}
+add_action( 'wp_footer', 'ms365cal_assets' );
+
+/**
+ * ---------------------------------------------------------------------------
+ *  Admin settings
+ * ---------------------------------------------------------------------------
+ */
+function ms365cal_admin_menu() {
+	add_options_page( 'MS365 Calendar', 'MS365 Calendar', 'manage_options', 'ms365cal', 'ms365cal_settings_page' );
+}
+add_action( 'admin_menu', 'ms365cal_admin_menu' );
+
+function ms365cal_settings_page() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		return;
+	}
+
+	if ( isset( $_POST['ms365cal_nonce'] ) && wp_verify_nonce( sanitize_key( $_POST['ms365cal_nonce'] ), 'ms365cal_save' ) ) {
+		$new = ms365cal_get_settings();
+
+		$new['tenant_id'] = sanitize_text_field( wp_unslash( $_POST['tenant_id'] ?? '' ) );
+		$new['client_id'] = sanitize_text_field( wp_unslash( $_POST['client_id'] ?? '' ) );
+
+		$posted_secret = trim( wp_unslash( $_POST['client_secret'] ?? '' ) );
+		if ( '' !== $posted_secret ) {
+			$new['client_secret'] = $posted_secret;
+		}
+		$new['cache_minutes'] = max( 1, (int) ( $_POST['cache_minutes'] ?? 20 ) );
+		$new['timezone']      = sanitize_text_field( wp_unslash( $_POST['timezone'] ?? 'UTC' ) );
+		$new['rate_max']      = max( 0, (int) ( $_POST['rate_max'] ?? MS365CAL_RATE_MAX ) );
+		$new['rate_window']   = max( 1, (int) ( $_POST['rate_window'] ?? MS365CAL_RATE_WINDOW ) );
+		$new['show_outlook']  = ! empty( $_POST['show_outlook'] );
+
+		$cals = array();
+		$rows = isset( $_POST['cal'] ) && is_array( $_POST['cal'] ) ? $_POST['cal'] : array();
+		foreach ( $rows as $row ) {
+			$slug = sanitize_title( $row['slug'] ?? '' );
+			$src  = trim( sanitize_text_field( wp_unslash( $row['source'] ?? '' ) ) );
+			if ( '' === $slug || '' === $src ) {
+				continue;
+			}
+			$color = sanitize_hex_color( $row['color'] ?? '#378add' );
+			if ( ! $color ) {
+				$color = '#378add';
+			}
+			$cals[] = array(
+				'slug'    => $slug,
+				'label'   => sanitize_text_field( wp_unslash( $row['label'] ?? $slug ) ),
+				'color'   => $color,
+				'type'    => ( 'mailbox' === ( $row['type'] ?? '' ) ) ? 'mailbox' : 'group',
+				'source'  => $src,
+				'default' => ! empty( $row['default'] ),
+			);
+		}
+		$new['calendars'] = $cals;
+
+		update_option( MS365CAL_OPTION, $new );
+		delete_transient( MS365CAL_TOKEN_TRANSIENT );
+		echo '<div class="notice notice-success"><p>Settings saved.</p></div>';
+	}
+
+	$s          = ms365cal_get_settings();
+	$has_secret = (bool) ( $s['client_secret'] || ( defined( 'MS365CAL_CLIENT_SECRET' ) && MS365CAL_CLIENT_SECRET ) );
+	?>
+	<div class="wrap">
+		<h1>MS365 Merged Calendar</h1>
+		<form method="post">
+			<?php wp_nonce_field( 'ms365cal_save', 'ms365cal_nonce' ); ?>
+
+			<h2>Azure app registration</h2>
+			<p>Register an app in Entra ID, grant <code>Application</code> permissions
+			<code>Calendars.Read</code> (shared mailboxes) and <code>Group.Read.All</code>
+			(group calendars), then grant admin consent and add a client secret.</p>
+			<table class="form-table">
+				<tr><th>Tenant ID</th><td><input type="text" name="tenant_id" class="regular-text" value="<?php echo esc_attr( $s['tenant_id'] ); ?>"></td></tr>
+				<tr><th>Client ID</th><td><input type="text" name="client_id" class="regular-text" value="<?php echo esc_attr( $s['client_id'] ); ?>"></td></tr>
+				<tr><th>Client secret</th><td>
+					<input type="password" name="client_secret" class="regular-text" value="" placeholder="<?php echo $has_secret ? '&bull;&bull;&bull;&bull;&bull;&bull; (leave blank to keep)' : 'Enter secret'; ?>">
+					<p class="description">Stored in the database. For better security, define <code>MS365CAL_CLIENT_SECRET</code> in wp-config.php instead.</p>
+				</td></tr>
+				<tr><th>Cache (minutes)</th><td><input type="number" name="cache_minutes" min="1" value="<?php echo esc_attr( $s['cache_minutes'] ); ?>"></td></tr>
+				<tr><th>Timezone</th><td><input type="text" name="timezone" class="regular-text" value="<?php echo esc_attr( $s['timezone'] ); ?>"> <span class="description">e.g. Europe/Stockholm</span></td></tr>
+				<tr><th>Rate limit</th><td>
+					<input type="number" name="rate_max" min="0" value="<?php echo esc_attr( $s['rate_max'] ); ?>" style="width:6em">
+					requests per
+					<input type="number" name="rate_window" min="1" value="<?php echo esc_attr( $s['rate_window'] ); ?>" style="width:6em">
+					seconds, per IP.
+					<p class="description">Applies to the public events endpoint. Set requests to <code>0</code> to disable the limiter. Cached views don't count toward it.</p>
+				</td></tr>
+				<tr><th>Outlook link</th><td>
+					<label><input type="checkbox" name="show_outlook" <?php checked( ! empty( $s['show_outlook'] ) ); ?>> Show an &ldquo;Open in Outlook&rdquo; link in the expanded event details</label>
+					<p class="description">Off by default. When enabled, each expanded event includes a link to open it in Outlook on the web.</p>
+				</td></tr>
+			</table>
+
+			<h2>Calendars</h2>
+			<p>For a <strong>group</strong>, the source is the group's object ID (GUID).
+			For a <strong>shared mailbox</strong>, the source is its email address.</p>
+			<table class="widefat" id="ms365cal-rows">
+				<thead><tr>
+					<th>Label</th><th>Slug</th><th>Type</th><th>Source (GUID or email)</th><th>Colour</th><th>On by default</th><th></th>
+				</tr></thead>
+				<tbody>
+				<?php
+				$rows = ! empty( $s['calendars'] ) ? $s['calendars'] : array(
+					array(
+						'slug'    => '',
+						'label'   => '',
+						'color'   => '#378add',
+						'type'    => 'group',
+						'source'  => '',
+						'default' => true,
+					),
+				);
+				foreach ( $rows as $i => $c ) :
+					?>
+					<tr>
+						<td><input type="text" name="cal[<?php echo (int) $i; ?>][label]" value="<?php echo esc_attr( $c['label'] ); ?>"></td>
+						<td><input type="text" name="cal[<?php echo (int) $i; ?>][slug]" value="<?php echo esc_attr( $c['slug'] ); ?>"></td>
+						<td>
+							<select name="cal[<?php echo (int) $i; ?>][type]">
+								<option value="group"   <?php selected( $c['type'], 'group' ); ?>>Group</option>
+								<option value="mailbox" <?php selected( $c['type'], 'mailbox' ); ?>>Shared mailbox</option>
+							</select>
+						</td>
+						<td><input type="text" name="cal[<?php echo (int) $i; ?>][source]" class="regular-text" value="<?php echo esc_attr( $c['source'] ); ?>"></td>
+						<td><input type="text" name="cal[<?php echo (int) $i; ?>][color]" value="<?php echo esc_attr( $c['color'] ); ?>" size="8"></td>
+						<td style="text-align:center"><input type="checkbox" name="cal[<?php echo (int) $i; ?>][default]" <?php checked( ! empty( $c['default'] ) ); ?>></td>
+						<td><button type="button" class="button ms365cal-del">Remove</button></td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+			<p><button type="button" class="button" id="ms365cal-add">Add calendar</button></p>
+
+			<?php submit_button(); ?>
+		</form>
+
+		<h2>Usage</h2>
+		<p><code>[ms365_calendar]</code> &mdash; all calendars, 14-day window.<br>
+		<code>[ms365_calendar calendars="eng,events" days="30"]</code> &mdash; specific slugs and window size.</p>
+
+		<h2>Troubleshooting</h2>
+		<?php
+		$debug_url = add_query_arg(
+			array(
+				'debug'    => 1,
+				'days'     => 60,
+				'_wpnonce' => wp_create_nonce( 'wp_rest' ),
+			),
+			rest_url( 'ms365cal/v1/events' )
+		);
+		?>
+		<p><a href="<?php echo esc_url( $debug_url ); ?>" target="_blank" rel="noopener" class="button">Run calendar diagnostic</a></p>
+		<p class="description">
+			Opens a JSON report of each calendar's live Graph status (HTTP code, event count, and any error).
+			A <code>403</code> means missing permission or admin consent; <code>404</code> means a wrong source ID
+			or type; <code>200</code> with <code>events: 0</code> means the credentials and IDs are fine, so it's the
+			date window. The link above already carries the security nonce that REST cookie-auth requires &mdash;
+			typing the URL by hand without it returns the normal (public) empty response instead. The nonce expires
+			after a while, so reload this settings page to get a fresh link. Only administrators can see the report.
+		</p>
+	</div>
+
+	<script>
+	(function(){
+		var body=document.querySelector('#ms365cal-rows tbody');
+		var idx=body.querySelectorAll('tr').length;
+		document.getElementById('ms365cal-add').addEventListener('click',function(){
+			var tr=body.querySelector('tr').cloneNode(true);
+			tr.querySelectorAll('input,select').forEach(function(el){
+				el.name=el.name.replace(/cal\[\d+\]/,'cal['+idx+']');
+				if(el.type==='checkbox')el.checked=false;else if(el.tagName==='SELECT')el.selectedIndex=0;else el.value=(el.name.indexOf('color')>-1?'#378add':'');
+			});
+			body.appendChild(tr);idx++;
+		});
+		body.addEventListener('click',function(e){
+			if(e.target.classList.contains('ms365cal-del')){
+				if(body.querySelectorAll('tr').length>1)e.target.closest('tr').remove();
+			}
+		});
+	})();
+	</script>
+	<?php
+}

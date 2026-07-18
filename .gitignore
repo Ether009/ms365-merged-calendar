@@ -1,0 +1,14 @@
+# Build artifacts (the release zip is produced by CI / packaging, never committed)
+*.zip
+
+# Local WPCS / PHPCS verification tooling (see CLAUDE.md → Dev / verification tooling)
+/phpcs.phar
+/phpcbf.phar
+/wpcs/
+/phpcsutils/
+/phpcsextra/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp

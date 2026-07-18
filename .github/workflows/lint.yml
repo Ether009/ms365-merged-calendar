@@ -1,0 +1,38 @@
+name: Lint
+
+# Enforces the project's golden rule: ms365-merged-calendar.php must pass both
+# `php -l` and `phpcs --standard=WordPress-Extra` with zero violations. The
+# vendored plugin-update-checker/ library is third-party and not linted here.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  phpcs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP 7.4 (the plugin's baseline)
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '7.4'
+          coverage: none
+
+      - name: PHP syntax check
+        run: php -l ms365-merged-calendar.php
+
+      - name: Install WPCS toolchain
+        run: |
+          set -euo pipefail
+          curl -sSL -o phpcs.phar https://github.com/PHPCSStandards/PHP_CodeSniffer/releases/latest/download/phpcs.phar
+          git clone --depth 1 https://github.com/WordPress/WordPress-Coding-Standards.git wpcs
+          git clone --depth 1 https://github.com/PHPCSStandards/PHPCSUtils.git phpcsutils
+          git clone --depth 1 https://github.com/PHPCSStandards/PHPCSExtra.git phpcsextra
+          php phpcs.phar --config-set installed_paths "$PWD/wpcs,$PWD/phpcsutils,$PWD/phpcsextra"
+
+      - name: PHPCS (WordPress-Extra)
+        run: php phpcs.phar --standard=WordPress-Extra --extensions=php ms365-merged-calendar.php
