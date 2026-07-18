@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.2.0
+ * Version:           2.2.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -387,6 +387,37 @@ function ms365cal_when_label( $start, $end, $all_day, $time_fmt ) {
 }
 
 /**
+ * Strip the auto-inserted Teams/online-meeting join block from a plain-text event
+ * body. Outlook wraps that block between long horizontal-rule lines (a run of
+ * underscore characters); everything from the first such rule to the last is
+ * boilerplate (join instructions, dial-in, legal notice) that's already covered by
+ * the separate join link and location shown in the UI, so it's just noise in the
+ * description. Text before/after the rule(s) — the organiser's own notes — is kept.
+ */
+function ms365cal_strip_meeting_boilerplate( $text ) {
+	if ( '' === $text || false === strpos( $text, '___' ) ) {
+		return $text;
+	}
+
+	if ( ! preg_match_all( '/_{10,}/', $text, $matches, PREG_OFFSET_CAPTURE ) ) {
+		return $text;
+	}
+
+	$first = $matches[0][0];
+	$last  = end( $matches[0] );
+
+	if ( count( $matches[0] ) === 1 ) {
+		// A single rule with no closing line: the block runs to the end of the body.
+		$stripped = substr( $text, 0, $first[1] );
+	} else {
+		$stripped = substr( $text, 0, $first[1] ) . substr( $text, $last[1] + strlen( $last[0] ) );
+	}
+
+	$stripped = preg_replace( '/\n{3,}/', "\n\n", $stripped );
+	return trim( (string) $stripped );
+}
+
+/**
  * Single Graph GET with one short inline retry for a tiny Retry-After. Longer
  * throttles fall through to the caller's back-off handling.
  */
@@ -578,6 +609,15 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 					$recur = 'Återkommande händelse';
 				}
 
+				$is_online = ! empty( $e['onlineMeeting'] );
+				$body      = isset( $e['body']['content'] ) ? trim( (string) $e['body']['content'] ) : '';
+				if ( $is_online && '' !== $body ) {
+					// The join link and "Teams meeting" location are shown separately in
+					// the UI, so the auto-inserted join/dial-in block in the body is just
+					// noise — strip it, keeping any real notes the organiser wrote.
+					$body = ms365cal_strip_meeting_boilerplate( $body );
+				}
+
 				$row = array(
 					'cal'      => $cal['slug'],
 					'title'    => isset( $e['subject'] ) && '' !== $e['subject'] ? $e['subject'] : '(ingen rubrik)',
@@ -589,9 +629,9 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 					'when'     => $when,
 					'recur'    => $recur,
 					'longSpan' => $long_span,
-					'body'     => isset( $e['body']['content'] ) ? trim( (string) $e['body']['content'] ) : '',
+					'body'     => $body,
 					'location' => isset( $e['location']['displayName'] ) ? $e['location']['displayName'] : '',
-					'online'   => ! empty( $e['onlineMeeting'] ),
+					'online'   => $is_online,
 					'joinUrl'  => isset( $e['onlineMeeting']['joinUrl'] ) ? $e['onlineMeeting']['joinUrl'] : '',
 					'link'     => isset( $e['webLink'] ) ? $e['webLink'] : '',
 				);

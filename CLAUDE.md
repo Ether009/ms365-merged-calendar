@@ -105,8 +105,11 @@ filter `ms365cal_client_ip` if behind a trusted proxy).
   the recurrence pattern pinned to the **bottom** (`.ms365cal-recur-line`,
   `margin-top:auto`) so it lines up with the end time. Titles are expand/collapse
   **buttons** (accordion — one open). Detail panel shows: when, the **full event body**
-  (Graph `body` in plain text via `Prefer: outlook.body-content-type="text"`), location
-  (detail-only), join link, and optional Outlook link.
+  (Graph `body` in plain text via `Prefer: outlook.body-content-type="text"`; for online
+  meetings, `ms365cal_strip_meeting_boilerplate()` removes the auto-inserted Teams
+  join/dial-in block — everything between the long underscore-rule lines — since the
+  join link and location cover that separately), location (detail-only), join link, and
+  optional Outlook link.
 
 ## Settings & constants
 
@@ -330,3 +333,9 @@ exists on a site once it's running 2.0.4+.
     multi-day events whose real end is past this window (a `longSpan` flag from
     `ms365cal_fetch_one()`) so a months-long background event can't mask an otherwise
     empty week. Single-shot per page load (`autoAdvanceChecked`).
+30. Strip the auto-inserted Teams join/dial-in block from the event body
+    (`ms365cal_strip_meeting_boilerplate()`): everything from the first long
+    underscore-rule line to the last is boilerplate already covered by the separate
+    join link and "Teams meeting" location, so it's removed from the description;
+    any real notes the organiser wrote before/after that block are kept. Only applied
+    when the event is an online meeting.
