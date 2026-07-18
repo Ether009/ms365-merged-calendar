@@ -261,4 +261,5 @@ exists on a site once it's running 2.0.4+.
     the endpoint records `is_plugin_active()` before the upgrade and reactivates
     afterward (`activate_plugin`), returning `reactivated` in the JSON. The 2.0.6→2.0.7
     hop can't self-heal (the deactivation runs in the OLD 2.0.6 code), so the release
-    auto-trigger is temporarily disabled in `release.yml` — re-enable once on 2.0.7+.
+    auto-trigger was temporarily disabled in `release.yml` during recovery, then
+    re-enabled after the live site reached 2.0.8 (a self-update verified `reactivated`).
