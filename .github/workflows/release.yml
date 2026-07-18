@@ -49,3 +49,28 @@ jobs:
             --generate-notes \
             "$SLUG.zip" \
           || gh release upload "$GITHUB_REF_NAME" "$SLUG.zip" --clobber
+
+      # Best-effort: tell the live site to pull the release it can now see. Needs a
+      # repo secret SITE_DEPLOY_KEY (matching MS365CAL_DEPLOY_KEY in the site's
+      # wp-config) and a repo variable DEPLOY_URL (the site's base URL). If either is
+      # unset, this is skipped; failures never fail the release (the site also
+      # auto-updates within ~12h, and won't have the endpoint until it's on 2.0.4+).
+      - name: Trigger live self-update
+        env:
+          DEPLOY_KEY: ${{ secrets.SITE_DEPLOY_KEY }}
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+        run: |
+          if [ -z "${DEPLOY_KEY}" ] || [ -z "${DEPLOY_URL}" ]; then
+            echo "SITE_DEPLOY_KEY / DEPLOY_URL not configured — skipping live update trigger."
+            exit 0
+          fi
+          echo "Triggering self-update on ${DEPLOY_URL}..."
+          code=$(curl -sS -o /tmp/selfupdate.out -w '%{http_code}' --max-time 120 -X POST \
+            -H "X-MS365CAL-Deploy-Key: ${DEPLOY_KEY}" \
+            "${DEPLOY_URL%/}/wp-json/ms365cal/v1/self-update" || echo "000")
+          echo "HTTP ${code}"
+          cat /tmp/selfupdate.out || true
+          echo
+          if [ "${code}" != "200" ]; then
+            echo "::notice::Self-update trigger returned ${code} (non-fatal: site auto-updates within ~12h; endpoint exists only on 2.0.4+)."
+          fi

@@ -97,7 +97,11 @@ filter `ms365cal_client_ip` if behind a trusted proxy).
 
 **Constants**: `MS365CAL_OPTION`, `MS365CAL_TOKEN_TRANSIENT`, `MS365CAL_MAX_WINDOW` (62),
 `MS365CAL_RATE_MAX` (30), `MS365CAL_RATE_WINDOW` (60), `MS365CAL_BACKOFF_MAX` (300),
-`MS365CAL_MAX_PAGES` (20).
+`MS365CAL_MAX_PAGES` (20), `MS365CAL_MAX_MASTERS` (200).
+
+**wp-config-only (optional)**: `MS365CAL_TENANT_ID` / `MS365CAL_CLIENT_ID` /
+`MS365CAL_CLIENT_SECRET` (win over DB settings), and `MS365CAL_DEPLOY_KEY` — the shared
+secret that enables the self-update endpoint (see below). All are undefined by default.
 
 ## Debug endpoint
 
@@ -190,6 +194,18 @@ drives whether an update is offered — it must match / exceed the tag), then
 `git tag vX.Y.Z && git push --tags`. The vendored library is not linted (WPCS runs on
 `ms365-merged-calendar.php` only).
 
+**Self-update endpoint** — `POST /wp-json/ms365cal/v1/self-update`
+(`ms365cal_rest_self_update()`). Forces a fresh PUC check and installs this repo's
+latest release via `Plugin_Upgrader`, so a live site with no shell access can be
+updated on demand. **Off unless `MS365CAL_DEPLOY_KEY` is defined** in wp-config; the
+key is sent in the `X-MS365CAL-Deploy-Key` header and compared with `hash_equals()`; a
+`ms365cal_selfupdate_lock` transient blocks rapid/concurrent triggers. The source is
+fixed to this repo, so it can only ever install the repo's own latest release. The
+`release.yml` "Trigger live self-update" step calls it after publishing, gated on a repo
+**secret** `SITE_DEPLOY_KEY` (= the wp-config key) and a repo **variable** `DEPLOY_URL`
+(site base URL); it's best-effort and never fails the release. Note the endpoint only
+exists on a site once it's running 2.0.4+.
+
 ## Known items / possible next work
 
 - `MS365CAL_MAX_WINDOW` (62) is a code constant, not a UI field (deliberate safety bound).
@@ -230,3 +246,6 @@ drives whether an update is offered — it must match / exceed the tag), then
     patterns for far more events instead of the generic "Recurring event" fallback.
     Replaced `ms365cal_recurrence_text()`/`ms365cal_events_base()` with
     `ms365cal_fetch_recurrence_map()`/`ms365cal_events_rel_base()`.
+17. Secret-guarded self-update endpoint (`POST /self-update`) + release-workflow
+    trigger, so a live site with no shell access can be updated on demand / on release.
+    Off unless `MS365CAL_DEPLOY_KEY` is set; installs only this repo's latest release.

@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.0.3
+ * Version:           2.0.4
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -54,8 +54,23 @@ function ms365cal_init_updates() {
 	if ( method_exists( $api, 'enableReleaseAssets' ) ) {
 		$api->enableReleaseAssets();
 	}
+
+	ms365cal_update_checker( $checker ); // stash it for the self-update endpoint.
 }
 ms365cal_init_updates();
+
+/**
+ * Accessor for the plugin-update-checker instance built in ms365cal_init_updates().
+ * Pass an instance to store it; call with no argument to retrieve it (or null if the
+ * updater library wasn't available). Lets the self-update endpoint force a re-check.
+ */
+function ms365cal_update_checker( $set = null ) {
+	static $checker = null;
+	if ( null !== $set ) {
+		$checker = $set;
+	}
+	return $checker;
+}
 
 /**
  * ---------------------------------------------------------------------------
@@ -803,8 +818,98 @@ function ms365cal_register_rest() {
 			'callback'            => 'ms365cal_rest_events',
 		)
 	);
+
+	// Deploy hook: force this plugin to pull + install its latest GitHub release.
+	// Disabled unless MS365CAL_DEPLOY_KEY is defined in wp-config; auth is the key
+	// (timing-safe compare), so no WP login is required. See ms365cal_rest_self_update().
+	register_rest_route(
+		'ms365cal/v1',
+		'/self-update',
+		array(
+			'methods'             => 'POST',
+			'permission_callback' => '__return_true',
+			'callback'            => 'ms365cal_rest_self_update',
+		)
+	);
 }
 add_action( 'rest_api_init', 'ms365cal_register_rest' );
+
+/**
+ * Secret-authenticated self-update. Forces the update checker to re-check GitHub and,
+ * if a newer release exists, installs it via the plugin upgrader — so a release can be
+ * pushed to a live site without shell access or a wp-admin click.
+ *
+ * Guardrails: off unless MS365CAL_DEPLOY_KEY is defined; key sent in the
+ * X-MS365CAL-Deploy-Key header and compared with hash_equals(); a short transient lock
+ * blocks concurrent/rapid triggers; and the update source is fixed to this plugin's
+ * own GitHub repo, so the endpoint can only ever install this repo's latest release —
+ * never arbitrary code.
+ */
+function ms365cal_rest_self_update( WP_REST_Request $req ) {
+	if ( ! defined( 'MS365CAL_DEPLOY_KEY' ) || '' === (string) MS365CAL_DEPLOY_KEY ) {
+		return new WP_REST_Response( array( 'error' => 'not_found' ), 404 );
+	}
+
+	$provided = (string) $req->get_header( 'X-MS365CAL-Deploy-Key' );
+	if ( '' === $provided || ! hash_equals( (string) MS365CAL_DEPLOY_KEY, $provided ) ) {
+		return new WP_REST_Response( array( 'error' => 'forbidden' ), 403 );
+	}
+
+	if ( get_transient( 'ms365cal_selfupdate_lock' ) ) {
+		$resp = new WP_REST_Response( array( 'error' => 'busy' ), 429 );
+		$resp->header( 'Retry-After', '60' );
+		return $resp;
+	}
+	set_transient( 'ms365cal_selfupdate_lock', 1, MINUTE_IN_SECONDS );
+
+	$plugin  = plugin_basename( __FILE__ );
+	$headers = get_file_data( __FILE__, array( 'Version' => 'Version' ) );
+	$before  = isset( $headers['Version'] ) ? $headers['Version'] : '';
+
+	$checker = ms365cal_update_checker();
+	if ( ! $checker ) {
+		delete_transient( 'ms365cal_selfupdate_lock' );
+		return new WP_REST_Response( array( 'error' => 'updater_unavailable' ), 500 );
+	}
+
+	// Force a fresh check so the update_plugins transient carries the newest release.
+	$checker->checkForUpdates();
+
+	require_once ABSPATH . 'wp-admin/includes/file.php';
+	require_once ABSPATH . 'wp-admin/includes/misc.php';
+	require_once ABSPATH . 'wp-admin/includes/plugin.php';
+	require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+
+	$skin     = new Automatic_Upgrader_Skin();
+	$upgrader = new Plugin_Upgrader( $skin );
+	$result   = $upgrader->upgrade( $plugin );
+
+	$after = get_file_data( __FILE__, array( 'Version' => 'Version' ) );
+	$after = isset( $after['Version'] ) ? $after['Version'] : '';
+
+	delete_transient( 'ms365cal_selfupdate_lock' );
+
+	if ( is_wp_error( $result ) ) {
+		return new WP_REST_Response(
+			array(
+				'error'   => 'upgrade_failed',
+				'message' => $result->get_error_message(),
+				'from'    => $before,
+			),
+			500
+		);
+	}
+
+	return new WP_REST_Response(
+		array(
+			'updated'  => ( $after !== $before ),
+			'from'     => $before,
+			'to'       => $after,
+			'messages' => $skin->get_upgrade_messages(),
+		),
+		200
+	);
+}
 
 /**
  * Best-effort client IP. Uses REMOTE_ADDR only — X-Forwarded-For is spoofable,
