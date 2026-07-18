@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.1.4
+ * Version:           2.1.5
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1219,7 +1219,7 @@ function ms365cal_shortcode( $atts ) {
 		</div>
 
 		<div class="ms365cal-list" aria-live="polite">
-			<div class="ms365cal-banner">Loading calendars&hellip;</div>
+			<div class="ms365cal-banner">Laddar&hellip;</div>
 		</div>
 	</div>
 	<?php
@@ -1438,10 +1438,11 @@ function ms365cal_assets() {
 			if(cache[key]){paint();return;}          // client-side window cache hit
 
 			var my=++reqId;
-			listEl.classList.add('is-loading');
-			if(!listEl.querySelector('.ms365cal-row')){
-				listEl.innerHTML='<div class="ms365cal-banner">Loading calendars\u2026</div>';
-			}
+			openDetail=null;
+			listEl.classList.remove('is-loading');
+			// Clear the previous week immediately and show a loading indicator, rather
+			// than leaving stale events on screen until the new window arrives.
+			listEl.innerHTML='<div class="ms365cal-banner">Laddar\u2026</div>';
 
 			var url=cfg.rest+'?cals='+encodeURIComponent(cfg.cals.join(','))
 				+'&start='+iso(start)+'&days='+days;

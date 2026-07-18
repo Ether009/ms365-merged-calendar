@@ -223,7 +223,7 @@ exists on a site once it's running 2.0.4+.
 - `MS365CAL_MAX_WINDOW` (62) is a code constant, not a UI field (deliberate safety bound).
 - Window is now a fixed Monday-aligned week (JS forces `days=7`); the `days` attribute
   is effectively ignored in weekly mode. Some front-end strings are Swedish (`Heldag`,
-  `Tidigare Händelser`, `Plats`, `Onlinemöte`); recurrence text and loading/error
+  `Tidigare Händelser`, `Plats`, `Onlinemöte`, `Laddar…`); recurrence text and error
   messages are still English — a full i18n pass is unaddressed.
 - The 10 categorical calendar colors aren't fully colorblind-safe; the label pills
   mitigate this.
@@ -295,3 +295,6 @@ exists on a site once it's running 2.0.4+.
     the end date that the left-column move had dropped. Self-update now calls
     `ms365cal_flush_cache()` after a version change, so event-rendering changes take
     effect immediately instead of waiting out the per-window cache (`cache_minutes`).
+24. Changing week now clears the list and shows a `Laddar…` indicator on a cache-miss
+    fetch, instead of leaving the previous week on screen (dimmed) until the new one
+    loads. Already-visited weeks still repaint instantly from the client cache.
