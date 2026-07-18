@@ -339,3 +339,5 @@ exists on a site once it's running 2.0.4+.
     join link and "Teams meeting" location, so it's removed from the description;
     any real notes the organiser wrote before/after that block are kept. Only applied
     when the event is an online meeting.
+31. Week nav now shows the ISO-8601 week number (`isoWeek()`, client-side): "Vecka 29 ·
+    13 jul – 19 jul" instead of just the date range.

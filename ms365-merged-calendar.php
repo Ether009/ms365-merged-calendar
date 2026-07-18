@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.2.1
+ * Version:           2.2.2
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1357,6 +1357,15 @@ function ms365cal_assets() {
 	function pad(n){return (n<10?'0':'')+n;}
 	function iso(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
 	function fmt(d){return d.toLocaleDateString('sv-SE',{day:'numeric',month:'short'});}
+	// ISO-8601 week number (Swedish "vecka" numbering): the week containing that
+	// week's Thursday determines both the week number and its ISO year.
+	function isoWeek(d){
+		var t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
+		var day=t.getUTCDay()||7;
+		t.setUTCDate(t.getUTCDate()+4-day);
+		var yearStart=new Date(Date.UTC(t.getUTCFullYear(),0,1));
+		return Math.ceil(((t-yearStart)/86400000+1)/7);
+	}
 
 	function initCal(root){
 		var cfg;
@@ -1387,7 +1396,7 @@ function ms365cal_assets() {
 		function winKey(){return iso(start)+'|'+days;}
 		function updateRange(){
 			var end=new Date(start);end.setDate(end.getDate()+days-1);
-			rangeEl.textContent=fmt(start)+' \u2013 '+fmt(end);
+			rangeEl.textContent='Vecka '+isoWeek(start)+' \u00b7 '+fmt(start)+' \u2013 '+fmt(end);
 		}
 		function updateNav(){
 			var prev=root.querySelector('.ms365cal-page[data-dir="-1"]');
