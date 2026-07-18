@@ -104,12 +104,16 @@ filter `ms365cal_client_ip` if behind a trusted proxy).
   `space-between`), so it flanks the rail alongside the times. Collapsed body = title plus
   the recurrence pattern pinned to the **bottom** (`.ms365cal-recur-line`,
   `margin-top:auto`) so it lines up with the end time. Titles are expand/collapse
-  **buttons** (accordion — one open). Detail panel shows: when, the **full event body**
-  (Graph `body` in plain text via `Prefer: outlook.body-content-type="text"`; for online
-  meetings, `ms365cal_strip_meeting_boilerplate()` removes the auto-inserted Teams
-  join/dial-in block — everything between the long underscore-rule lines — since the
-  join link and location cover that separately), location (detail-only), join link, and
-  optional Outlook link.
+  **buttons** (accordion — one open). Expanding inserts `.ms365cal-detail` *inside*
+  `.ms365cal-hbody`, between the title and the recurrence line — not as a separate block
+  below the row — so the whole row (times column and rail included, via
+  `.ms365cal-head`'s `align-items:stretch`) grows downward together; the times stay
+  visible throughout, so the detail doesn't repeat them. Detail shows: the **full event
+  body** (Graph `body` in plain text via `Prefer: outlook.body-content-type="text"`; for
+  online meetings, `ms365cal_strip_meeting_boilerplate()` removes the auto-inserted
+  Teams join/dial-in block — everything between the long underscore-rule lines — since
+  the join link and location cover that separately), location (detail-only), join link,
+  and optional Outlook link.
 
 ## Settings & constants
 
@@ -341,3 +345,8 @@ exists on a site once it's running 2.0.4+.
     when the event is an online meeting.
 31. Week nav now shows the ISO-8601 week number (`isoWeek()`, client-side): "Vecka 29 ·
     13 jul – 19 jul" instead of just the date range.
+32. Expanding an event now grows the whole row (times column and colored rail included)
+    downward, instead of appending a separate card below it. `.ms365cal-detail` moved
+    inside `.ms365cal-hbody`, between the title and the recurrence line; the redundant
+    "when" line was dropped from the detail since the times stay visible in the left
+    column throughout. `.ms365cal-detail` is only rendered when there's content to show.

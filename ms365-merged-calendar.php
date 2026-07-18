@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.2.2
+ * Version:           2.2.3
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1344,8 +1344,8 @@ function ms365cal_assets() {
 	.ms365cal-title{transition:opacity .12s;}
 	.ms365cal-caret{display:inline-block;flex:0 0 auto;font-size:9px;opacity:.4;transition:transform .15s;}
 	.ms365cal-recur-line{margin-top:auto;padding-top:8px;font-size:12px;opacity:.6;}
-	.ms365cal-detail{margin:2px 0 12px;padding:12px 14px;background:var(--ms-soft);border-radius:10px;font-size:13px;line-height:1.65;}
-	.ms365cal-detail div{margin:3px 0;}
+	.ms365cal-detail{margin:6px 0 4px;font-size:13px;line-height:1.6;}
+	.ms365cal-detail div{margin:5px 0;}
 	.ms365cal-detail div:first-child{margin-top:0;}
 	.ms365cal-desc{white-space:pre-wrap;opacity:.9;}
 	.ms365cal-detail a{color:#185fa5;font-weight:600;text-decoration:underline;text-underline-offset:2px;}
@@ -1427,7 +1427,10 @@ function ms365cal_assets() {
 				var recurShort=e.recur?e.recur.replace(/^Upprepas\s+/,''):'';
 				var recurLine=e.recur?'<div class="ms365cal-recur-line">\u21bb '+esc(recurShort)+'</div>':'';
 
-				var d='<div>'+esc(e.when)+'</div>';
+				// No "when" line here \u2014 the start/end times stay visible in the left
+				// column (which stretches with the row) while expanded, so repeating
+				// them in the body would be redundant.
+				var d='';
 				if(e.body)d+='<div class="ms365cal-desc">'+esc(e.body)+'</div>';
 				if(e.location)d+='<div><span class="ms365cal-detail-label">Plats:</span> '+esc(e.location)+'</div>';
 				if(e.joinUrl)d+='<div><a href="'+esc(e.joinUrl)+'" target="_blank" rel="noopener">Anslut till onlinem\u00f6te</a></div>';
@@ -1446,10 +1449,10 @@ function ms365cal_assets() {
 							+'<button type="button" class="ms365cal-ev" aria-expanded="false">'
 								+'<span class="ms365cal-title">'+esc(e.title)+'</span>'
 							+'</button>'
+							+(d?'<div class="ms365cal-detail" hidden>'+d+'</div>':'')
 							+recurLine
 						+'</div>'
 					+'</div>'
-					+'<div class="ms365cal-detail" hidden>'+d+'</div>'
 				+'</div>';
 			});
 			return html;
