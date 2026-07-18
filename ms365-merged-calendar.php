@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.1.9
+ * Version:           2.2.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -435,6 +435,11 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 	} catch ( Exception $e ) {
 		$window_start = new DateTime( 'now', $zone );
 	}
+	try {
+		$window_end = new DateTime( $end_iso, $zone );
+	} catch ( Exception $e ) {
+		$window_end = clone $window_start;
+	}
 
 	$today0 = new DateTime( 'now', $zone );
 	$today0->setTime( 0, 0, 0 );
@@ -512,6 +517,13 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 
 				$allday = ! empty( $e['isAllDay'] );
 
+				// True for a multi-day event whose real end falls after this window (e.g.
+				// a months-long ongoing series). Sent to the client so it can tell a
+				// genuinely-empty week from one that only "has" a long-running background
+				// event — used to decide whether to default to next week instead.
+				$multiday  = $en && ( $en->format( 'Y-m-d' ) !== $st->format( 'Y-m-d' ) );
+				$long_span = $multiday && ( $en > $window_end );
+
 				// Weekly grouping: an event still running today (started earlier, ends
 				// later) is pinned to today so it shows as current rather than under a
 				// past day; one that started before the window but already ended is
@@ -576,6 +588,7 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 					't2'       => $t2,
 					'when'     => $when,
 					'recur'    => $recur,
+					'longSpan' => $long_span,
 					'body'     => isset( $e['body']['content'] ) ? trim( (string) $e['body']['content'] ) : '',
 					'location' => isset( $e['location']['displayName'] ) ? $e['location']['displayName'] : '',
 					'online'   => ! empty( $e['onlineMeeting'] ),
@@ -1329,6 +1342,7 @@ function ms365cal_assets() {
 		var throttleRetries = 0;
 		var MAX_THROTTLE_RETRIES = 3;
 		var openDetail = null;
+		var autoAdvanceChecked = false;                   // only skip an empty first week once
 
 		function winKey(){return iso(start)+'|'+days;}
 		function updateRange(){
@@ -1473,6 +1487,24 @@ function ms365cal_assets() {
 					if(my!==reqId)return;                // a newer request superseded this
 					throttleRetries=0;
 					cache[key]=data.events||[];
+
+					// If this is the initial (earliest) week and it has nothing left from
+					// today onward — ignoring multi-day events that only "cover" the week
+					// as part of a longer span (their real end is past this week) — default
+					// to next week instead, and treat it as the new earliest week.
+					if(!autoAdvanceChecked&&iso(start)===iso(minStart)){
+						autoAdvanceChecked=true;
+						var hasUpcoming=cache[key].some(function(e){
+							return e.dayKey>=todayKey&&enabled[e.cal]&&!e.longSpan;
+						});
+						if(!hasUpcoming){
+							start=new Date(start);start.setDate(start.getDate()+days);
+							minStart=new Date(start);
+							load();
+							return;
+						}
+					}
+
 					listEl.classList.remove('is-loading');
 					paint();
 				})

@@ -84,6 +84,14 @@ filter `ms365cal_client_ip` if behind a trusted proxy).
   is the earliest (prev disabled there — client bound, `minStart`). Client-side in-memory
   window cache. Paging buttons disabled 600ms per click. A request-id guard drops
   superseded responses. Bounded auto-retry on 429 using `Retry-After` (max 3).
+- **Empty-week skip** (initial load only): if the current week has nothing left from
+  today onward, the client defaults to next week instead and treats it as the new
+  earliest (`minStart` moves too). "Nothing left" ignores multi-day events whose real
+  end falls after the window — a months-long ongoing event (e.g. a summer break) doesn't
+  by itself count as "the week has something happening." The server flags this per event
+  as `longSpan` (`multiday && $en > $window_end` in `ms365cal_fetch_one()`); the client
+  checks `dayKey>=todayKey && enabled[cal] && !longSpan` once, on the first load, guarded
+  by `autoAdvanceChecked` so it can only skip forward one week.
 - Events grouped by day. On the current week, days before today collapse into a
   **"Tidigare Händelser"** toggle (default collapsed); today onward show normally. An
   event running *through* today (started earlier, ends later) is pinned to today by the
@@ -317,3 +325,8 @@ exists on a site once it's running 2.0.4+.
     the title); the "Tidigare Händelser" group toggle keeps its own caret. Dropped the
     now-dead `.ms365cal-meta`/`.ms365cal-pill` CSS left over from moving the category
     label out of the body.
+29. Empty-week skip: if the initial (current) week has no events left from today
+    onward, the client defaults to next week and makes it the new earliest, ignoring
+    multi-day events whose real end is past this window (a `longSpan` flag from
+    `ms365cal_fetch_one()`) so a months-long background event can't mask an otherwise
+    empty week. Single-shot per page load (`autoAdvanceChecked`).
