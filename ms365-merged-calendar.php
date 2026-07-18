@@ -209,7 +209,7 @@ function ms365cal_format_recurrence( $rec ) {
 		'saturday'  => 'lör',
 		'sunday'    => 'sön',
 	);
-	$ord = array(
+	$ord  = array(
 		'first'  => 'första',
 		'second' => 'andra',
 		'third'  => 'tredje',
