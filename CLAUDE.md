@@ -313,3 +313,7 @@ exists on a site once it's running 2.0.4+.
 27. Category label moved from a pill in the body to the middle of the left time column
     (`.ms365cal-cat`, coloured), between the start/end times, so it flanks the rail with
     the times; column widened to 82px. Collapsed body is now just title + recurrence.
+28. Removed the caret marker in front of each event title (collapsed body is now just
+    the title); the "Tidigare Händelser" group toggle keeps its own caret. Dropped the
+    now-dead `.ms365cal-meta`/`.ms365cal-pill` CSS left over from moving the category
+    label out of the body.

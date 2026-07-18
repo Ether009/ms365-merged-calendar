@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.1.8
+ * Version:           2.1.9
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1289,10 +1289,7 @@ function ms365cal_assets() {
 	.ms365cal-ev{font-size:15px;font-weight:600;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;color:inherit;font-family:inherit;display:flex;align-items:baseline;gap:9px;width:100%;line-height:1.35;}
 	.ms365cal-ev:hover .ms365cal-title{opacity:.65;}
 	.ms365cal-title{transition:opacity .12s;}
-	.ms365cal-caret{display:inline-block;flex:0 0 auto;font-size:9px;opacity:.4;transition:transform .15s;transform:translateY(-2px);}
-	.ms365cal-ev[aria-expanded="true"] .ms365cal-caret{transform:translateY(-2px) rotate(90deg);}
-	.ms365cal-meta{font-size:12.5px;margin-top:4px;display:flex;flex-wrap:wrap;gap:9px;align-items:center;}
-	.ms365cal-pill{padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;line-height:1.5;white-space:nowrap;}
+	.ms365cal-caret{display:inline-block;flex:0 0 auto;font-size:9px;opacity:.4;transition:transform .15s;}
 	.ms365cal-recur-line{margin-top:auto;padding-top:8px;font-size:12px;opacity:.6;}
 	.ms365cal-detail{margin:2px 0 12px;padding:12px 14px;background:var(--ms-soft);border-radius:10px;font-size:13px;line-height:1.65;}
 	.ms365cal-detail div{margin:3px 0;}
@@ -1384,7 +1381,6 @@ function ms365cal_assets() {
 						+'<div class="ms365cal-rail" style="background:'+m.color+'"></div>'
 						+'<div class="ms365cal-hbody">'
 							+'<button type="button" class="ms365cal-ev" aria-expanded="false">'
-								+'<span class="ms365cal-caret">\u25b8</span>'
 								+'<span class="ms365cal-title">'+esc(e.title)+'</span>'
 							+'</button>'
 							+recurLine
