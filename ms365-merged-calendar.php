@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.1.6
+ * Version:           2.1.7
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -216,15 +216,22 @@ function ms365cal_format_recurrence( $rec ) {
 		'fourth' => 'fjärde',
 		'last'   => 'sista',
 	);
+	$dow  = array();
 	$days = array();
 	if ( ! empty( $p['daysOfWeek'] ) && is_array( $p['daysOfWeek'] ) ) {
 		foreach ( $p['daysOfWeek'] as $d ) {
-			$days[] = isset( $abbr[ strtolower( $d ) ] ) ? $abbr[ strtolower( $d ) ] : $d;
+			$key    = strtolower( $d );
+			$dow[]  = $key;
+			$days[] = isset( $abbr[ $key ] ) ? $abbr[ $key ] : $key;
 		}
 	}
 	$day_list = implode( ', ', $days );
-	$idx_key  = isset( $p['index'] ) ? $p['index'] : 'first';
-	$index    = isset( $ord[ $idx_key ] ) ? $ord[ $idx_key ] : 'första';
+	$weekdays = array( 'monday', 'tuesday', 'wednesday', 'thursday', 'friday' );
+	if ( 5 === count( $dow ) && ! array_diff( $weekdays, $dow ) ) {
+		$day_list = 'vardagar';
+	}
+	$idx_key = isset( $p['index'] ) ? $p['index'] : 'first';
+	$index   = isset( $ord[ $idx_key ] ) ? $ord[ $idx_key ] : 'första';
 
 	switch ( $p['type'] ) {
 		case 'daily':
@@ -1298,7 +1305,7 @@ function ms365cal_assets() {
 	function esc(s){var d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML;}
 	function pad(n){return (n<10?'0':'')+n;}
 	function iso(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
-	function fmt(d){return d.toLocaleDateString(undefined,{day:'numeric',month:'short'});}
+	function fmt(d){return d.toLocaleDateString('sv-SE',{day:'numeric',month:'short'});}
 
 	function initCal(root){
 		var cfg;

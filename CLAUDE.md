@@ -303,3 +303,8 @@ exists on a site once it's running 2.0.4+.
     recurrence()` — days, ordinals, `Upprepas … till …`), `Återkommande händelse`,
     `(ingen rubrik)`, shell UI (`Kalendrar`, `Välj alla`, `Rensa`, nav aria-labels), and
     JS error/retry strings. Graph `case` values and the admin page stay English.
+26. Recurrence on all five weekdays renders as `vardagar` instead of
+    `mån, tis, ons, tor, fre`. Week-range label pinned to `sv-SE` (`fmt()` used the
+    visitor's browser locale, so it could read English on a non-Swedish browser). Graph's
+    own content (titles/bodies/locations, e.g. `Microsoft Teams-möte`) already returns
+    Swedish because the tenant locale is Swedish — nothing to translate there.
