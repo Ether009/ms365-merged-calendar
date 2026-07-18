@@ -11,7 +11,7 @@ browser never talks to Microsoft directly.
 
 - Main file: `ms365-merged-calendar.php` (everything in one file, by design).
 - Function prefix: `ms365cal_`.
-- Shortcode: `[ms365_calendar calendars="slug1,slug2" days="14"]` (no attrs = all calendars, 14-day window).
+- Shortcode: `[ms365_calendar calendars="slug1,slug2"]` (no attrs = all calendars; weekly, Monday-aligned).
 
 ## Golden rules (do not regress)
 
@@ -80,14 +80,19 @@ failure, or no pattern) falls back to a generic "Recurring event".
 filter `ms365cal_client_ip` if behind a trusted proxy).
 
 **Front-end behavior**
-- Prev/next window paging (14-day default). Client-side in-memory window cache. Paging
-  buttons disabled 600ms per click. A request-id guard drops superseded responses.
-  Bounded auto-retry on 429 using `Retry-After` (max 3).
-- Events grouped by day. Multi-day / ongoing events are clamped to the window start for
-  grouping but display their real span (with end date/time).
-- Event titles are expand/collapse **buttons** (accordion — at most one open). Detail
-  panel shows: when, recurrence, location, online-meeting join link, and an optional
-  "Open in Outlook" link.
+- **Weekly**, Monday-aligned window (7 days). Prev/next page by week; the current week
+  is the earliest (prev disabled there — client bound, `minStart`). Client-side in-memory
+  window cache. Paging buttons disabled 600ms per click. A request-id guard drops
+  superseded responses. Bounded auto-retry on 429 using `Retry-After` (max 3).
+- Events grouped by day. On the current week, days before today collapse into a
+  **"Tidigare Händelser"** toggle (default collapsed); today onward show normally. An
+  event running *through* today (started earlier, ends later) is pinned to today by the
+  server (`$today0`) so it stays visible rather than hiding in the past group.
+- Each row is `[times] [color rail] [body]`: start time (`t1`) at the top of the rail,
+  end time (`t2`) at the bottom (all-day → `Heldag`). Titles are expand/collapse
+  **buttons** (accordion — one open). Detail panel shows: when, **event body**
+  (`bodyPreview`), location, join link, and optional Outlook link. Recurrence shows in
+  the always-visible meta line (not repeated in the detail).
 
 ## Settings & constants
 
@@ -212,7 +217,10 @@ exists on a site once it's running 2.0.4+.
 ## Known items / possible next work
 
 - `MS365CAL_MAX_WINDOW` (62) is a code constant, not a UI field (deliberate safety bound).
-- Default shortcode window is 14 days (tested at 60). Consider per-shortcode defaults.
+- Window is now a fixed Monday-aligned week (JS forces `days=7`); the `days` attribute
+  is effectively ignored in weekly mode. Some front-end strings are Swedish (`Heldag`,
+  `Tidigare Händelser`, `Plats`, `Onlinemöte`); recurrence text and loading/error
+  messages are still English — a full i18n pass is unaddressed.
 - The 10 categorical calendar colors aren't fully colorblind-safe; the label pills
   mitigate this.
 - Recurrence master-fetching adds Graph calls on a cold fetch; amortized by caching.
@@ -268,3 +276,9 @@ exists on a site once it's running 2.0.4+.
     refined pill, muted recurrence/location via `.ms365cal-when`/`.ms365cal-loc`).
     Muted tones use `opacity` + neutral rgba (`--ms-line`/`--ms-soft`) so it adapts to
     the host theme's text color rather than hardcoded grays.
+21. Weekly, Monday-aligned window (was 14-day): page by week, current week is the
+    earliest. Current-week past days collapse into a "Tidigare Händelser" toggle
+    (server pins events running through today to today so they stay visible). Times moved
+    to a left column flanking the rail (`t1` top / `t2` bottom, all-day → `Heldag`), and
+    the event body (`bodyPreview`, added to `$select`) now shows in the detail in place of
+    the repeated recurrence line.

@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.0.9
+ * Version:           2.1.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -171,7 +171,7 @@ function ms365cal_view_url( $cal, $start_iso, $end_iso ) {
 			'endDateTime'   => $end_iso,
 			'$orderby'      => 'start/dateTime',
 			'$top'          => 100,
-			'$select'       => 'subject,start,end,location,isAllDay,onlineMeeting,webLink,type,seriesMasterId',
+			'$select'       => 'subject,start,end,location,isAllDay,onlineMeeting,webLink,type,seriesMasterId,bodyPreview',
 		),
 		$base
 	);
@@ -355,9 +355,9 @@ function ms365cal_when_label( $start, $end, $all_day, $time_fmt ) {
 		// Graph's all-day end is exclusive midnight, so the last real day is -1.
 		$end_incl = ( clone $end )->modify( '-1 day' );
 		if ( $end_incl->format( 'Y-m-d' ) <= $start->format( 'Y-m-d' ) ) {
-			return 'All day';
+			return 'Heldag';
 		}
-		return 'All day · ' . wp_date( 'j M', $start->getTimestamp(), $tz ) . ' – ' . wp_date( 'j M', $end_incl->getTimestamp(), $tz );
+		return 'Heldag · ' . wp_date( 'j M', $start->getTimestamp(), $tz ) . ' – ' . wp_date( 'j M', $end_incl->getTimestamp(), $tz );
 	}
 
 	$s_time = wp_date( $time_fmt, $start->getTimestamp(), $tz );
@@ -420,6 +420,9 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 	} catch ( Exception $e ) {
 		$window_start = new DateTime( 'now', $zone );
 	}
+
+	$today0 = new DateTime( 'now', $zone );
+	$today0->setTime( 0, 0, 0 );
 
 	$out          = array();
 	$need_masters = array(); // seriesMasterId => true, resolved in one $batch pass after paging.
@@ -494,13 +497,30 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 
 				$allday = ! empty( $e['isAllDay'] );
 
-				// Ongoing events that began before the window group under the window
-				// start (today) rather than a past date, but keep their real span.
-				$eff = ( $st < $window_start ) ? clone $window_start : $st;
+				// Weekly grouping: an event still running today (started earlier, ends
+				// later) is pinned to today so it shows as current rather than under a
+				// past day; one that started before the window but already ended is
+				// pinned to the window start; everything else keeps its own start day.
+				if ( null !== $en && $en > $today0 && $st < $today0 ) {
+					$eff = clone $today0;
+				} elseif ( $st < $window_start ) {
+					$eff = clone $window_start;
+				} else {
+					$eff = $st;
+				}
 
 				$when = $en
 					? ms365cal_when_label( $st, $en, $allday, $time_fmt )
-					: ( $allday ? 'All day' : wp_date( $time_fmt, $st->getTimestamp(), $zone ) );
+					: ( $allday ? 'Heldag' : wp_date( $time_fmt, $st->getTimestamp(), $zone ) );
+
+				// Start/end times for the left-hand time column that flanks the rail.
+				if ( $allday ) {
+					$t1 = 'Heldag';
+					$t2 = '';
+				} else {
+					$t1 = wp_date( $time_fmt, $st->getTimestamp(), $zone );
+					$t2 = $en ? wp_date( $time_fmt, $en->getTimestamp(), $zone ) : '';
+				}
 
 				// Recurrence: calendarView returns expanded occurrences; the pattern
 				// lives on the series master. Collect the master IDs now and resolve
@@ -523,8 +543,11 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 					'sort'     => $eff->format( 'Y-m-d\TH:i:s' ),
 					'dayKey'   => $eff->format( 'Y-m-d' ),
 					'dayLabel' => wp_date( 'D j M', $eff->getTimestamp(), $zone ),
+					't1'       => $t1,
+					't2'       => $t2,
 					'when'     => $when,
 					'recur'    => $recur,
+					'body'     => isset( $e['bodyPreview'] ) ? trim( (string) $e['bodyPreview'] ) : '',
 					'location' => isset( $e['location']['displayName'] ) ? $e['location']['displayName'] : '',
 					'online'   => ! empty( $e['onlineMeeting'] ),
 					'joinUrl'  => isset( $e['onlineMeeting']['joinUrl'] ) ? $e['onlineMeeting']['joinUrl'] : '',
@@ -1006,7 +1029,7 @@ function ms365cal_rest_events( WP_REST_Request $req ) {
 		$start = wp_date( 'Y-m-d' );
 	}
 
-	$days = $req->get_param( 'days' ) ? (int) $req->get_param( 'days' ) : 14;
+	$days = $req->get_param( 'days' ) ? (int) $req->get_param( 'days' ) : 7;
 
 	// Admin-only diagnostic. Non-admins passing debug=1 fall through to normal output.
 	if ( $req->get_param( 'debug' ) && current_user_can( 'manage_options' ) ) {
@@ -1082,7 +1105,7 @@ function ms365cal_rgba( $hex, $alpha ) {
 /**
  * ---------------------------------------------------------------------------
  *  Shortcode — renders the shell only. Events load async via the REST route.
- *  [ms365_calendar calendars="eng,sales" days="14"]
+ *  [ms365_calendar calendars="eng,sales"]  (weekly, Monday-aligned)
  * ---------------------------------------------------------------------------
  */
 function ms365cal_shortcode( $atts ) {
@@ -1096,7 +1119,7 @@ function ms365cal_shortcode( $atts ) {
 	$atts = shortcode_atts(
 		array(
 			'calendars' => '',
-			'days'      => 14,
+			'days'      => 7,
 		),
 		$atts,
 		'ms365_calendar'
@@ -1213,22 +1236,31 @@ function ms365cal_assets() {
 	.ms365cal-error button{margin-left:8px;font-size:13px;padding:4px 11px;border:1px solid var(--ms-line);border-radius:999px;background:transparent;cursor:pointer;color:inherit;}
 	.ms365cal-day{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;opacity:.5;margin:22px 0 4px;}
 	.ms365cal-day:first-child{margin-top:2px;}
-	.ms365cal-row{display:flex;align-items:stretch;gap:12px;padding:2px 12px;border-radius:12px;transition:background .12s;}
+	.ms365cal-earlier{margin:6px 0 2px;}
+	.ms365cal-earlier-tog{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:0;padding:6px 12px;margin:0;cursor:pointer;color:inherit;font:inherit;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;opacity:.55;transition:opacity .12s;}
+	.ms365cal-earlier-tog:hover{opacity:.9;}
+	.ms365cal-earlier-tog .ms365cal-caret{transform:none;}
+	.ms365cal-earlier-tog[aria-expanded="true"] .ms365cal-caret{transform:rotate(90deg);}
+	.ms365cal-row{border-radius:12px;padding:0 12px;transition:background .12s;}
 	.ms365cal-row:hover{background:var(--ms-soft);}
-	.ms365cal-rail{width:4px;border-radius:999px;flex:0 0 auto;margin:11px 0;}
-	.ms365cal-body{flex:1;min-width:0;padding:9px 0;}
+	.ms365cal-head{display:flex;align-items:stretch;gap:10px;}
+	.ms365cal-times{flex:0 0 auto;width:46px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;padding:10px 0;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.25;}
+	.ms365cal-t1{font-weight:600;opacity:.85;}
+	.ms365cal-t2{opacity:.5;}
+	.ms365cal-rail{width:4px;border-radius:999px;flex:0 0 auto;margin:10px 0;}
+	.ms365cal-hbody{flex:1;min-width:0;padding:10px 0;}
 	.ms365cal-ev{font-size:15px;font-weight:600;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;color:inherit;font-family:inherit;display:flex;align-items:baseline;gap:9px;width:100%;line-height:1.35;}
 	.ms365cal-ev:hover .ms365cal-title{opacity:.65;}
 	.ms365cal-title{transition:opacity .12s;}
 	.ms365cal-caret{display:inline-block;flex:0 0 auto;font-size:9px;opacity:.4;transition:transform .15s;transform:translateY(-2px);}
 	.ms365cal-ev[aria-expanded="true"] .ms365cal-caret{transform:translateY(-2px) rotate(90deg);}
 	.ms365cal-meta{font-size:12.5px;margin-top:4px;display:flex;flex-wrap:wrap;gap:9px;align-items:center;}
-	.ms365cal-when{font-weight:600;opacity:.72;font-variant-numeric:tabular-nums;}
 	.ms365cal-pill{padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;line-height:1.5;white-space:nowrap;}
 	.ms365cal-recur,.ms365cal-loc{opacity:.6;}
-	.ms365cal-detail{margin-top:10px;padding:12px 14px;background:var(--ms-soft);border-radius:10px;font-size:13px;line-height:1.65;}
-	.ms365cal-detail div{margin:2px 0;}
+	.ms365cal-detail{margin:2px 0 12px;padding:12px 14px;background:var(--ms-soft);border-radius:10px;font-size:13px;line-height:1.65;}
+	.ms365cal-detail div{margin:3px 0;}
 	.ms365cal-detail div:first-child{margin-top:0;}
+	.ms365cal-desc{white-space:pre-wrap;opacity:.9;}
 	.ms365cal-detail a{color:#185fa5;font-weight:600;text-decoration:underline;text-underline-offset:2px;}
 	.ms365cal-detail-label{opacity:.5;}
 	</style>
@@ -1251,8 +1283,13 @@ function ms365cal_assets() {
 		cfg.cals.forEach(function(s){enabled[s]=!!cfg.defaults[s];});
 
 		var cache = {};                                   // window key -> events[]
-		var start = new Date(cfg.startY, cfg.startM-1, cfg.startD);
-		var days  = cfg.windowDays;
+		// Monday of the week containing d (weeks start Monday).
+		function weekStart(d){var x=new Date(d.getFullYear(),d.getMonth(),d.getDate());x.setDate(x.getDate()-((x.getDay()+6)%7));return x;}
+		var today    = new Date(cfg.startY, cfg.startM-1, cfg.startD); // today, site tz
+		var todayKey = iso(today);
+		var start    = weekStart(today);
+		var minStart = weekStart(today);                  // current week is the earliest
+		var days  = 7;                                    // weekly window
 		var reqId = 0;
 		var retryTimer = null;
 		var throttleRetries = 0;
@@ -1263,6 +1300,10 @@ function ms365cal_assets() {
 		function updateRange(){
 			var end=new Date(start);end.setDate(end.getDate()+days-1);
 			rangeEl.textContent=fmt(start)+' \u2013 '+fmt(end);
+		}
+		function updateNav(){
+			var prev=root.querySelector('.ms365cal-page[data-dir="-1"]');
+			if(prev)prev.disabled=(start<=minStart);
 		}
 
 		function renderChips(){
@@ -1280,60 +1321,91 @@ function ms365cal_assets() {
 			});
 		}
 
-		function paint(){
-			openDetail=null;
-			var events=cache[winKey()]||[];
-			var visible=events.filter(function(e){return enabled[e.cal];});
-			if(!visible.length){
-				listEl.innerHTML='<p class="ms365cal-empty">No events in this window.</p>';
-				return;
-			}
+		function renderDays(list){
 			var html='',lastDay='';
-			visible.forEach(function(e){
+			list.forEach(function(e){
 				var m=cfg.meta[e.cal];if(!m)return;
 				if(e.dayKey!==lastDay){html+='<div class="ms365cal-day">'+esc(e.dayLabel)+'</div>';lastDay=e.dayKey;}
 
 				var recurShort=e.recur?e.recur.replace(/^Repeats\s+/,''):'';
-				var meta='<span class="ms365cal-when">'+esc(e.when)+'</span>'
-					+'<span class="ms365cal-pill" style="color:'+m.color+';background:'+m.bg+'">'+esc(m.label)+'</span>';
+				var meta='<span class="ms365cal-pill" style="color:'+m.color+';background:'+m.bg+'">'+esc(m.label)+'</span>';
 				if(e.recur)meta+='<span class="ms365cal-recur">\u21bb '+esc(recurShort)+'</span>';
 				if(e.location)meta+='<span class="ms365cal-loc">'+esc(e.location)+'</span>';
 				else if(e.online)meta+='<span class="ms365cal-loc">Online</span>';
 
 				var d='<div>'+esc(e.when)+'</div>';
-				if(e.recur)d+='<div>'+esc(e.recur)+'</div>';
-				if(e.location)d+='<div><span class="ms365cal-detail-label">Location:</span> '+esc(e.location)+'</div>';
-				if(e.joinUrl)d+='<div><a href="'+esc(e.joinUrl)+'" target="_blank" rel="noopener">Join online meeting</a></div>';
-				else if(e.online)d+='<div>Online meeting</div>';
-				if(cfg.showOutlook&&e.link)d+='<div><a href="'+esc(e.link)+'" target="_blank" rel="noopener">Open in Outlook \u2197</a></div>';
+				if(e.body)d+='<div class="ms365cal-desc">'+esc(e.body)+'</div>';
+				if(e.location)d+='<div><span class="ms365cal-detail-label">Plats:</span> '+esc(e.location)+'</div>';
+				if(e.joinUrl)d+='<div><a href="'+esc(e.joinUrl)+'" target="_blank" rel="noopener">Anslut till onlinem\u00f6te</a></div>';
+				else if(e.online)d+='<div>Onlinem\u00f6te</div>';
+				if(cfg.showOutlook&&e.link)d+='<div><a href="'+esc(e.link)+'" target="_blank" rel="noopener">\u00d6ppna i Outlook \u2197</a></div>';
 
+				var t2=e.t2?'<span class="ms365cal-t2">'+esc(e.t2)+'</span>':'';
 				html+='<div class="ms365cal-row">'
-					+'<div class="ms365cal-rail" style="background:'+m.color+'"></div>'
-					+'<div class="ms365cal-body">'
-						+'<button type="button" class="ms365cal-ev" aria-expanded="false">'
-							+'<span class="ms365cal-caret">\u25b8</span>'
-							+'<span class="ms365cal-title">'+esc(e.title)+'</span>'
-						+'</button>'
-						+'<div class="ms365cal-meta">'+meta+'</div>'
-						+'<div class="ms365cal-detail" hidden>'+d+'</div>'
+					+'<div class="ms365cal-head">'
+						+'<div class="ms365cal-times"><span class="ms365cal-t1">'+esc(e.t1)+'</span>'+t2+'</div>'
+						+'<div class="ms365cal-rail" style="background:'+m.color+'"></div>'
+						+'<div class="ms365cal-hbody">'
+							+'<button type="button" class="ms365cal-ev" aria-expanded="false">'
+								+'<span class="ms365cal-caret">\u25b8</span>'
+								+'<span class="ms365cal-title">'+esc(e.title)+'</span>'
+							+'</button>'
+							+'<div class="ms365cal-meta">'+meta+'</div>'
+						+'</div>'
 					+'</div>'
+					+'<div class="ms365cal-detail" hidden>'+d+'</div>'
 				+'</div>';
 			});
+			return html;
+		}
+
+		function paint(){
+			openDetail=null;
+			var events=cache[winKey()]||[];
+			var visible=events.filter(function(e){return enabled[e.cal];});
+			if(!visible.length){
+				listEl.innerHTML='<p class="ms365cal-empty">Inga h\u00e4ndelser den h\u00e4r veckan.</p>';
+				return;
+			}
+			var past=[],upcoming=[];
+			visible.forEach(function(e){(e.dayKey<todayKey?past:upcoming).push(e);});
+
+			var html='';
+			if(past.length){
+				html+='<div class="ms365cal-earlier">'
+					+'<button type="button" class="ms365cal-earlier-tog" aria-expanded="false">'
+						+'<span class="ms365cal-caret">\u25b8</span>Tidigare H\u00e4ndelser'
+					+'</button>'
+					+'<div class="ms365cal-earlier-body" hidden>'+renderDays(past)+'</div>'
+				+'</div>';
+			}
+			html+=renderDays(upcoming);
 			listEl.innerHTML=html;
 		}
 
-		// Expand/collapse event details — accordion: at most one open at a time.
+		// Expand/collapse: accordion for events (one open at a time); independent
+		// toggle for the "Tidigare Händelser" group.
 		listEl.addEventListener('click',function(ev){
+			var tog=ev.target.closest('.ms365cal-earlier-tog');
+			if(tog&&listEl.contains(tog)){
+				var eb=tog.parentNode.querySelector('.ms365cal-earlier-body');
+				var op=tog.getAttribute('aria-expanded')==='true';
+				tog.setAttribute('aria-expanded',op?'false':'true');
+				if(eb)eb.hidden=op;
+				return;
+			}
 			var btn=ev.target.closest('.ms365cal-ev');
 			if(!btn||!listEl.contains(btn))return;
-			var detail=btn.parentNode.querySelector('.ms365cal-detail');
+			var row=btn.closest('.ms365cal-row');
+			var detail=row?row.querySelector('.ms365cal-detail'):null;
 			if(!detail)return;
 			if(openDetail===detail){
 				detail.hidden=true;btn.setAttribute('aria-expanded','false');openDetail=null;return;
 			}
 			if(openDetail){
 				openDetail.hidden=true;
-				var prev=openDetail.parentNode.querySelector('.ms365cal-ev');
+				var prow=openDetail.closest('.ms365cal-row');
+				var prev=prow?prow.querySelector('.ms365cal-ev'):null;
 				if(prev)prev.setAttribute('aria-expanded','false');
 			}
 			detail.hidden=false;btn.setAttribute('aria-expanded','true');openDetail=detail;
@@ -1341,7 +1413,7 @@ function ms365cal_assets() {
 
 		function load(){
 			if(retryTimer){clearTimeout(retryTimer);retryTimer=null;}
-			updateRange();
+			updateRange();updateNav();
 			var key=winKey();
 			if(cache[key]){paint();return;}          // client-side window cache hit
 
@@ -1403,10 +1475,14 @@ function ms365cal_assets() {
 		pageBtns.forEach(function(btn){
 			btn.addEventListener('click',function(){
 				if(btn.disabled)return;
+				var dir=parseInt(btn.getAttribute('data-dir'),10);
+				var ns=new Date(start);ns.setDate(ns.getDate()+dir*days);
+				if(ns<minStart)ns=new Date(minStart);   // don't page before the current week
+				if(iso(ns)===iso(start))return;          // already at the bound
+				start=ns;
 				setPaging(true);
-				start.setDate(start.getDate()+parseInt(btn.getAttribute('data-dir'),10)*days);
 				load();
-				setTimeout(function(){setPaging(false);},COOLDOWN);
+				setTimeout(function(){setPaging(false);updateNav();},COOLDOWN);
 			});
 		});
 		root.querySelectorAll('.ms365cal-act').forEach(function(btn){
@@ -1595,8 +1671,8 @@ function ms365cal_settings_page() {
 		</form>
 
 		<h2>Usage</h2>
-		<p><code>[ms365_calendar]</code> &mdash; all calendars, 14-day window.<br>
-		<code>[ms365_calendar calendars="eng,events" days="30"]</code> &mdash; specific slugs and window size.</p>
+		<p><code>[ms365_calendar]</code> &mdash; all calendars, current week (Monday&ndash;Sunday).<br>
+		<code>[ms365_calendar calendars="eng,events"]</code> &mdash; specific slugs. Navigate forward week by week; the current week is the earliest.</p>
 
 		<h2>Troubleshooting</h2>
 		<?php
