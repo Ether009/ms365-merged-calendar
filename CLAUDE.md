@@ -93,7 +93,8 @@ filter `ms365cal_client_ip` if behind a trusted proxy).
 
 **Option `ms365cal_settings`**: `tenant_id`, `client_id`, `client_secret`,
 `cache_minutes` (20), `timezone`, `rate_max`, `rate_window`, `show_outlook`
-(bool, default **false**), `calendars[]` = `{slug, label, color, type(group|mailbox), source, default}`.
+(bool, default **false**), `deploy_key` (self-update secret; blank = endpoint off),
+`calendars[]` = `{slug, label, color, type(group|mailbox), source, default}`.
 
 **Constants**: `MS365CAL_OPTION`, `MS365CAL_TOKEN_TRANSIENT`, `MS365CAL_MAX_WINDOW` (62),
 `MS365CAL_RATE_MAX` (30), `MS365CAL_RATE_WINDOW` (60), `MS365CAL_BACKOFF_MAX` (300),
@@ -197,8 +198,10 @@ drives whether an update is offered — it must match / exceed the tag), then
 **Self-update endpoint** — `POST /wp-json/ms365cal/v1/self-update`
 (`ms365cal_rest_self_update()`). Forces a fresh PUC check and installs this repo's
 latest release via `Plugin_Upgrader`, so a live site with no shell access can be
-updated on demand. **Off unless `MS365CAL_DEPLOY_KEY` is defined** in wp-config; the
-key is sent in the `X-MS365CAL-Deploy-Key` header and compared with `hash_equals()`; a
+updated on demand. **Off unless a deploy key is set** — either `MS365CAL_DEPLOY_KEY` in
+wp-config (preferred) or the **Deploy key** field on the settings page (stored in
+`ms365cal_settings['deploy_key']`); the constant wins via `ms365cal_cred('deploy_key')`.
+The key is sent in the `X-MS365CAL-Deploy-Key` header and compared with `hash_equals()`; a
 `ms365cal_selfupdate_lock` transient blocks rapid/concurrent triggers. The source is
 fixed to this repo, so it can only ever install the repo's own latest release. The
 `release.yml` "Trigger live self-update" step calls it after publishing, gated on a repo
@@ -249,3 +252,6 @@ exists on a site once it's running 2.0.4+.
 17. Secret-guarded self-update endpoint (`POST /self-update`) + release-workflow
     trigger, so a live site with no shell access can be updated on demand / on release.
     Off unless `MS365CAL_DEPLOY_KEY` is set; installs only this repo's latest release.
+18. Deploy key is now also settable on the settings page (**Deploy key** field, password
+    input with keep-on-blank + a "Clear" toggle), stored in `ms365cal_settings`. The
+    wp-config constant still wins (endpoint reads `ms365cal_cred('deploy_key')`).

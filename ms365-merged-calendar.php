@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.0.4
+ * Version:           2.0.5
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -80,6 +80,7 @@ function ms365cal_update_checker( $set = null ) {
  *      define( 'MS365CAL_TENANT_ID', '...' );
  *      define( 'MS365CAL_CLIENT_ID', '...' );
  *      define( 'MS365CAL_CLIENT_SECRET', '...' );
+ *      define( 'MS365CAL_DEPLOY_KEY', '...' );  // self-update endpoint; also settable in the UI
  */
 function ms365cal_get_settings() {
 	$defaults = array(
@@ -91,6 +92,7 @@ function ms365cal_get_settings() {
 		'rate_max'      => MS365CAL_RATE_MAX,
 		'rate_window'   => MS365CAL_RATE_WINDOW,
 		'show_outlook'  => false,
+		'deploy_key'    => '',
 		'calendars'     => array(),
 	);
 	$saved    = get_option( MS365CAL_OPTION, array() );
@@ -846,12 +848,15 @@ add_action( 'rest_api_init', 'ms365cal_register_rest' );
  * never arbitrary code.
  */
 function ms365cal_rest_self_update( WP_REST_Request $req ) {
-	if ( ! defined( 'MS365CAL_DEPLOY_KEY' ) || '' === (string) MS365CAL_DEPLOY_KEY ) {
+	// Effective key: wp-config constant MS365CAL_DEPLOY_KEY wins, else the DB setting
+	// (Settings → MS365 Calendar). Empty = endpoint disabled.
+	$key = (string) ms365cal_cred( 'deploy_key' );
+	if ( '' === $key ) {
 		return new WP_REST_Response( array( 'error' => 'not_found' ), 404 );
 	}
 
 	$provided = (string) $req->get_header( 'X-MS365CAL-Deploy-Key' );
-	if ( '' === $provided || ! hash_equals( (string) MS365CAL_DEPLOY_KEY, $provided ) ) {
+	if ( '' === $provided || ! hash_equals( $key, $provided ) ) {
 		return new WP_REST_Response( array( 'error' => 'forbidden' ), 403 );
 	}
 
@@ -1438,6 +1443,17 @@ function ms365cal_settings_page() {
 		$new['rate_window']   = max( 1, (int) ( $_POST['rate_window'] ?? MS365CAL_RATE_WINDOW ) );
 		$new['show_outlook']  = ! empty( $_POST['show_outlook'] );
 
+		// Deploy key: like the client secret, a blank submission keeps the stored value;
+		// the explicit "clear" checkbox is the only way to erase it (disable the endpoint).
+		if ( ! empty( $_POST['deploy_key_clear'] ) ) {
+			$new['deploy_key'] = '';
+		} else {
+			$posted_deploy = trim( wp_unslash( $_POST['deploy_key'] ?? '' ) );
+			if ( '' !== $posted_deploy ) {
+				$new['deploy_key'] = $posted_deploy;
+			}
+		}
+
 		$cals = array();
 		$rows = isset( $_POST['cal'] ) && is_array( $_POST['cal'] ) ? $_POST['cal'] : array();
 		foreach ( $rows as $row ) {
@@ -1466,8 +1482,10 @@ function ms365cal_settings_page() {
 		echo '<div class="notice notice-success"><p>Settings saved.</p></div>';
 	}
 
-	$s          = ms365cal_get_settings();
-	$has_secret = (bool) ( $s['client_secret'] || ( defined( 'MS365CAL_CLIENT_SECRET' ) && MS365CAL_CLIENT_SECRET ) );
+	$s            = ms365cal_get_settings();
+	$has_secret   = (bool) ( $s['client_secret'] || ( defined( 'MS365CAL_CLIENT_SECRET' ) && MS365CAL_CLIENT_SECRET ) );
+	$deploy_const = defined( 'MS365CAL_DEPLOY_KEY' ) && MS365CAL_DEPLOY_KEY;
+	$has_deploy   = (bool) ( $s['deploy_key'] || $deploy_const );
 	?>
 	<div class="wrap">
 		<h1>MS365 Merged Calendar</h1>
@@ -1497,6 +1515,23 @@ function ms365cal_settings_page() {
 				<tr><th>Outlook link</th><td>
 					<label><input type="checkbox" name="show_outlook" <?php checked( ! empty( $s['show_outlook'] ) ); ?>> Show an &ldquo;Open in Outlook&rdquo; link in the expanded event details</label>
 					<p class="description">Off by default. When enabled, each expanded event includes a link to open it in Outlook on the web.</p>
+				</td></tr>
+				<tr><th>Deploy key</th><td>
+					<?php if ( $deploy_const ) : ?>
+						<p class="description"><strong>Set via <code>MS365CAL_DEPLOY_KEY</code> in wp-config.php</strong>, which overrides this field.</p>
+					<?php else : ?>
+						<input type="password" name="deploy_key" class="regular-text" value="" placeholder="<?php echo $has_deploy ? '&bull;&bull;&bull;&bull;&bull;&bull; (leave blank to keep)' : 'Paste a long random secret'; ?>">
+						<?php if ( $has_deploy ) : ?>
+							<label style="margin-left:8px"><input type="checkbox" name="deploy_key_clear" value="1"> Clear (disable endpoint)</label>
+						<?php endif; ?>
+					<?php endif; ?>
+					<p class="description">
+						Enables <code>POST <?php echo esc_html( rest_url( 'ms365cal/v1/self-update' ) ); ?></code>
+						(header <code>X-MS365CAL-Deploy-Key</code>), which makes this site install the plugin's
+						latest GitHub release on demand. Leave blank to keep the endpoint disabled. Anyone with
+						the key can trigger a reinstall, so use a long random value and rotate it if it leaks.
+						Defining <code>MS365CAL_DEPLOY_KEY</code> in wp-config.php is more secure and takes precedence.
+					</p>
 				</td></tr>
 			</table>
 
