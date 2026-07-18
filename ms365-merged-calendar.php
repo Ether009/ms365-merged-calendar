@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.1.7
+ * Version:           2.1.8
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1280,9 +1280,10 @@ function ms365cal_assets() {
 	.ms365cal-row{border-radius:12px;padding:0 12px;transition:background .12s;}
 	.ms365cal-row:hover{background:var(--ms-soft);}
 	.ms365cal-head{display:flex;align-items:stretch;gap:10px;}
-	.ms365cal-times{flex:0 0 auto;width:46px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;text-align:right;padding:10px 0;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.25;}
+	.ms365cal-times{flex:0 0 auto;width:82px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;text-align:right;padding:10px 0;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.25;}
 	.ms365cal-t1{font-weight:600;opacity:.85;}
 	.ms365cal-t2{opacity:.5;}
+	.ms365cal-cat{font-size:11px;font-weight:600;line-height:1.2;overflow-wrap:break-word;max-width:100%;padding:2px 0;}
 	.ms365cal-rail{width:4px;border-radius:999px;flex:0 0 auto;margin:10px 0;}
 	.ms365cal-hbody{flex:1;min-width:0;padding:10px 0;display:flex;flex-direction:column;}
 	.ms365cal-ev{font-size:15px;font-weight:600;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;color:inherit;font-family:inherit;display:flex;align-items:baseline;gap:9px;width:100%;line-height:1.35;}
@@ -1364,7 +1365,6 @@ function ms365cal_assets() {
 				if(e.dayKey!==lastDay){html+='<div class="ms365cal-day">'+esc(e.dayLabel)+'</div>';lastDay=e.dayKey;}
 
 				var recurShort=e.recur?e.recur.replace(/^Upprepas\s+/,''):'';
-				var meta='<span class="ms365cal-pill" style="color:'+m.color+';background:'+m.bg+'">'+esc(m.label)+'</span>';
 				var recurLine=e.recur?'<div class="ms365cal-recur-line">\u21bb '+esc(recurShort)+'</div>':'';
 
 				var d='<div>'+esc(e.when)+'</div>';
@@ -1374,17 +1374,19 @@ function ms365cal_assets() {
 				else if(e.online)d+='<div>Onlinem\u00f6te</div>';
 				if(cfg.showOutlook&&e.link)d+='<div><a href="'+esc(e.link)+'" target="_blank" rel="noopener">\u00d6ppna i Outlook \u2197</a></div>';
 
-				var t2=e.t2?'<span class="ms365cal-t2">'+esc(e.t2)+'</span>':'';
 				html+='<div class="ms365cal-row">'
 					+'<div class="ms365cal-head">'
-						+'<div class="ms365cal-times"><span class="ms365cal-t1">'+esc(e.t1)+'</span>'+t2+'</div>'
+						+'<div class="ms365cal-times">'
+							+'<span class="ms365cal-t1">'+esc(e.t1)+'</span>'
+							+'<span class="ms365cal-cat" style="color:'+m.color+'">'+esc(m.label)+'</span>'
+							+'<span class="ms365cal-t2">'+esc(e.t2)+'</span>'
+						+'</div>'
 						+'<div class="ms365cal-rail" style="background:'+m.color+'"></div>'
 						+'<div class="ms365cal-hbody">'
 							+'<button type="button" class="ms365cal-ev" aria-expanded="false">'
 								+'<span class="ms365cal-caret">\u25b8</span>'
 								+'<span class="ms365cal-title">'+esc(e.title)+'</span>'
 							+'</button>'
-							+'<div class="ms365cal-meta">'+meta+'</div>'
 							+recurLine
 						+'</div>'
 					+'</div>'

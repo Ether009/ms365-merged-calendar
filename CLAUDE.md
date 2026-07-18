@@ -91,8 +91,10 @@ filter `ms365cal_client_ip` if behind a trusted proxy).
 - Each row is `[times] [color rail] [body]`: start time (`t1`) at the top of the rail,
   end time (`t2`) at the bottom. Single-day all-day → `Heldag`; a **multi-day** event
   shows its start date/time at the top and end date/time at the bottom (all-day skips the
-  time) so the span is visible without expanding. Collapsed body = title, category
-  pill, and the recurrence pattern pinned to the **bottom** (`.ms365cal-recur-line`,
+  time) so the span is visible without expanding. The left column also holds the category
+  **label** (`.ms365cal-cat`, coloured) in the middle (between `t1`/`t2` via the column's
+  `space-between`), so it flanks the rail alongside the times. Collapsed body = title plus
+  the recurrence pattern pinned to the **bottom** (`.ms365cal-recur-line`,
   `margin-top:auto`) so it lines up with the end time. Titles are expand/collapse
   **buttons** (accordion — one open). Detail panel shows: when, the **full event body**
   (Graph `body` in plain text via `Prefer: outlook.body-content-type="text"`), location
@@ -308,3 +310,6 @@ exists on a site once it's running 2.0.4+.
     visitor's browser locale, so it could read English on a non-Swedish browser). Graph's
     own content (titles/bodies/locations, e.g. `Microsoft Teams-möte`) already returns
     Swedish because the tenant locale is Swedish — nothing to translate there.
+27. Category label moved from a pill in the body to the middle of the left time column
+    (`.ms365cal-cat`, coloured), between the start/end times, so it flanks the rail with
+    the times; column widened to 82px. Collapsed body is now just title + recurrence.
