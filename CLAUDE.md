@@ -89,10 +89,12 @@ filter `ms365cal_client_ip` if behind a trusted proxy).
   event running *through* today (started earlier, ends later) is pinned to today by the
   server (`$today0`) so it stays visible rather than hiding in the past group.
 - Each row is `[times] [color rail] [body]`: start time (`t1`) at the top of the rail,
-  end time (`t2`) at the bottom (all-day → `Heldag`). Titles are expand/collapse
-  **buttons** (accordion — one open). Detail panel shows: when, **event body**
-  (`bodyPreview`), location, join link, and optional Outlook link. Recurrence shows in
-  the always-visible meta line (not repeated in the detail).
+  end time (`t2`) at the bottom (all-day → `Heldag`). Collapsed body = title, category
+  pill, and the recurrence pattern pinned to the **bottom** (`.ms365cal-recur-line`,
+  `margin-top:auto`) so it lines up with the end time. Titles are expand/collapse
+  **buttons** (accordion — one open). Detail panel shows: when, the **full event body**
+  (Graph `body` in plain text via `Prefer: outlook.body-content-type="text"`), location
+  (detail-only), join link, and optional Outlook link.
 
 ## Settings & constants
 
@@ -280,5 +282,9 @@ exists on a site once it's running 2.0.4+.
     earliest. Current-week past days collapse into a "Tidigare Händelser" toggle
     (server pins events running through today to today so they stay visible). Times moved
     to a left column flanking the rail (`t1` top / `t2` bottom, all-day → `Heldag`), and
-    the event body (`bodyPreview`, added to `$select`) now shows in the detail in place of
-    the repeated recurrence line.
+    the event body (added to `$select`) now shows in the detail in place of the repeated
+    recurrence line.
+22. List refinements: full event body (Graph `body` in plain text via `Prefer:
+    outlook.body-content-type="text"` instead of the 255-char `bodyPreview`); location
+    dropped from the collapsed meta (detail-only); recurrence moved out of the meta line
+    to a bottom-aligned `.ms365cal-recur-line` that lines up with the end time.

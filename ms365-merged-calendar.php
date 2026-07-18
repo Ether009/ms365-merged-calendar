@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.1.0
+ * Version:           2.1.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -171,7 +171,7 @@ function ms365cal_view_url( $cal, $start_iso, $end_iso ) {
 			'endDateTime'   => $end_iso,
 			'$orderby'      => 'start/dateTime',
 			'$top'          => 100,
-			'$select'       => 'subject,start,end,location,isAllDay,onlineMeeting,webLink,type,seriesMasterId,bodyPreview',
+			'$select'       => 'subject,start,end,location,isAllDay,onlineMeeting,webLink,type,seriesMasterId,body',
 		),
 		$base
 	);
@@ -404,7 +404,7 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 		'timeout' => 20,
 		'headers' => array(
 			'Authorization' => 'Bearer ' . $token,
-			'Prefer'        => 'outlook.timezone="' . $tz . '"',
+			'Prefer'        => 'outlook.timezone="' . $tz . '", outlook.body-content-type="text"',
 		),
 	);
 
@@ -547,7 +547,7 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 					't2'       => $t2,
 					'when'     => $when,
 					'recur'    => $recur,
-					'body'     => isset( $e['bodyPreview'] ) ? trim( (string) $e['bodyPreview'] ) : '',
+					'body'     => isset( $e['body']['content'] ) ? trim( (string) $e['body']['content'] ) : '',
 					'location' => isset( $e['location']['displayName'] ) ? $e['location']['displayName'] : '',
 					'online'   => ! empty( $e['onlineMeeting'] ),
 					'joinUrl'  => isset( $e['onlineMeeting']['joinUrl'] ) ? $e['onlineMeeting']['joinUrl'] : '',
@@ -1248,7 +1248,7 @@ function ms365cal_assets() {
 	.ms365cal-t1{font-weight:600;opacity:.85;}
 	.ms365cal-t2{opacity:.5;}
 	.ms365cal-rail{width:4px;border-radius:999px;flex:0 0 auto;margin:10px 0;}
-	.ms365cal-hbody{flex:1;min-width:0;padding:10px 0;}
+	.ms365cal-hbody{flex:1;min-width:0;padding:10px 0;display:flex;flex-direction:column;}
 	.ms365cal-ev{font-size:15px;font-weight:600;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;color:inherit;font-family:inherit;display:flex;align-items:baseline;gap:9px;width:100%;line-height:1.35;}
 	.ms365cal-ev:hover .ms365cal-title{opacity:.65;}
 	.ms365cal-title{transition:opacity .12s;}
@@ -1256,7 +1256,7 @@ function ms365cal_assets() {
 	.ms365cal-ev[aria-expanded="true"] .ms365cal-caret{transform:translateY(-2px) rotate(90deg);}
 	.ms365cal-meta{font-size:12.5px;margin-top:4px;display:flex;flex-wrap:wrap;gap:9px;align-items:center;}
 	.ms365cal-pill{padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;line-height:1.5;white-space:nowrap;}
-	.ms365cal-recur,.ms365cal-loc{opacity:.6;}
+	.ms365cal-recur-line{margin-top:auto;padding-top:8px;font-size:12px;opacity:.6;}
 	.ms365cal-detail{margin:2px 0 12px;padding:12px 14px;background:var(--ms-soft);border-radius:10px;font-size:13px;line-height:1.65;}
 	.ms365cal-detail div{margin:3px 0;}
 	.ms365cal-detail div:first-child{margin-top:0;}
@@ -1329,9 +1329,7 @@ function ms365cal_assets() {
 
 				var recurShort=e.recur?e.recur.replace(/^Repeats\s+/,''):'';
 				var meta='<span class="ms365cal-pill" style="color:'+m.color+';background:'+m.bg+'">'+esc(m.label)+'</span>';
-				if(e.recur)meta+='<span class="ms365cal-recur">\u21bb '+esc(recurShort)+'</span>';
-				if(e.location)meta+='<span class="ms365cal-loc">'+esc(e.location)+'</span>';
-				else if(e.online)meta+='<span class="ms365cal-loc">Online</span>';
+				var recurLine=e.recur?'<div class="ms365cal-recur-line">\u21bb '+esc(recurShort)+'</div>':'';
 
 				var d='<div>'+esc(e.when)+'</div>';
 				if(e.body)d+='<div class="ms365cal-desc">'+esc(e.body)+'</div>';
@@ -1351,6 +1349,7 @@ function ms365cal_assets() {
 								+'<span class="ms365cal-title">'+esc(e.title)+'</span>'
 							+'</button>'
 							+'<div class="ms365cal-meta">'+meta+'</div>'
+							+recurLine
 						+'</div>'
 					+'</div>'
 					+'<div class="ms365cal-detail" hidden>'+d+'</div>'
