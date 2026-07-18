@@ -255,3 +255,10 @@ exists on a site once it's running 2.0.4+.
 18. Deploy key is now also settable on the settings page (**Deploy key** field, password
     input with keep-on-blank + a "Clear" toggle), stored in `ms365cal_settings`. The
     wp-config constant still wins (endpoint reads `ms365cal_cred('deploy_key')`).
+19. **Self-update bug fix:** `Plugin_Upgrader::upgrade()` silently deactivates an active
+    plugin before the swap and only skips that during cron; in the REST endpoint nothing
+    reactivated it, so a self-update knocked the plugin (and the endpoint) offline. Now
+    the endpoint records `is_plugin_active()` before the upgrade and reactivates
+    afterward (`activate_plugin`), returning `reactivated` in the JSON. The 2.0.6→2.0.7
+    hop can't self-heal (the deactivation runs in the OLD 2.0.6 code), so the release
+    auto-trigger is temporarily disabled in `release.yml` — re-enable once on 2.0.7+.

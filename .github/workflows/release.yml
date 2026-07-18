@@ -60,6 +60,10 @@ jobs:
           DEPLOY_KEY: ${{ secrets.SITE_DEPLOY_KEY }}
           DEPLOY_URL: ${{ vars.DEPLOY_URL }}
         run: |
+          # TEMPORARILY DISABLED for the 2.0.6 -> 2.0.7 recovery: a site on 2.0.6 would
+          # run the OLD endpoint, which deactivates the plugin on self-update (fixed in
+          # 2.0.7). Re-enable once the site is on 2.0.7+ by deleting the next two lines.
+          echo "Auto-trigger disabled for this release (2.0.6 -> 2.0.7 recovery)."; exit 0
           if [ -z "${DEPLOY_KEY}" ] || [ -z "${DEPLOY_URL}" ]; then
             echo "SITE_DEPLOY_KEY / DEPLOY_URL not configured — skipping live update trigger."
             exit 0

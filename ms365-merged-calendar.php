@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.0.6
+ * Version:           2.0.7
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -885,9 +885,21 @@ function ms365cal_rest_self_update( WP_REST_Request $req ) {
 	require_once ABSPATH . 'wp-admin/includes/plugin.php';
 	require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
 
+	$was_active = is_plugin_active( $plugin );
+
 	$skin     = new Automatic_Upgrader_Skin();
 	$upgrader = new Plugin_Upgrader( $skin );
 	$result   = $upgrader->upgrade( $plugin );
+
+	// Plugin_Upgrader::upgrade() silently deactivates an active plugin before the
+	// swap and only skips that during cron (wp_doing_cron()). We run in a REST
+	// request, so nothing reactivates it — restore the prior active state ourselves,
+	// or a self-update would knock the plugin (and this endpoint) offline.
+	$reactivated = false;
+	if ( $was_active && ! is_plugin_active( $plugin ) ) {
+		activate_plugin( $plugin, '', false, true );
+		$reactivated = true;
+	}
 
 	$after = get_file_data( __FILE__, array( 'Version' => 'Version' ) );
 	$after = isset( $after['Version'] ) ? $after['Version'] : '';
@@ -907,10 +919,11 @@ function ms365cal_rest_self_update( WP_REST_Request $req ) {
 
 	return new WP_REST_Response(
 		array(
-			'updated'  => ( $after !== $before ),
-			'from'     => $before,
-			'to'       => $after,
-			'messages' => $skin->get_upgrade_messages(),
+			'updated'     => ( $after !== $before ),
+			'from'        => $before,
+			'to'          => $after,
+			'reactivated' => $reactivated,
+			'messages'    => $skin->get_upgrade_messages(),
 		),
 		200
 	);
