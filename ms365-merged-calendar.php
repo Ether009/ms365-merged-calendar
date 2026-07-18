@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.1.1
+ * Version:           2.1.2
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -513,12 +513,26 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 					? ms365cal_when_label( $st, $en, $allday, $time_fmt )
 					: ( $allday ? 'Heldag' : wp_date( $time_fmt, $st->getTimestamp(), $zone ) );
 
-				// Start/end times for the left-hand time column that flanks the rail.
+				// Left-hand time column that flanks the rail. Single-day events show the
+				// times (or "Heldag"); multi-day events show the start date/time at the
+				// top and the end date/time at the bottom so the span stays visible
+				// without expanding (all-day skips the time).
+				$s_time = wp_date( $time_fmt, $st->getTimestamp(), $zone );
 				if ( $allday ) {
-					$t1 = 'Heldag';
-					$t2 = '';
+					// Graph's all-day end is exclusive midnight; the last real day is -1.
+					$end_incl = $en ? ( clone $en )->modify( '-1 day' ) : clone $st;
+					if ( $end_incl->format( 'Y-m-d' ) > $st->format( 'Y-m-d' ) ) {
+						$t1 = wp_date( 'j M', $st->getTimestamp(), $zone );
+						$t2 = wp_date( 'j M', $end_incl->getTimestamp(), $zone );
+					} else {
+						$t1 = 'Heldag';
+						$t2 = '';
+					}
+				} elseif ( $en && $en->format( 'Y-m-d' ) !== $st->format( 'Y-m-d' ) ) {
+					$t1 = wp_date( 'j M', $st->getTimestamp(), $zone ) . ' ' . $s_time;
+					$t2 = wp_date( 'j M', $en->getTimestamp(), $zone ) . ' ' . wp_date( $time_fmt, $en->getTimestamp(), $zone );
 				} else {
-					$t1 = wp_date( $time_fmt, $st->getTimestamp(), $zone );
+					$t1 = $s_time;
 					$t2 = $en ? wp_date( $time_fmt, $en->getTimestamp(), $zone ) : '';
 				}
 
@@ -1244,7 +1258,7 @@ function ms365cal_assets() {
 	.ms365cal-row{border-radius:12px;padding:0 12px;transition:background .12s;}
 	.ms365cal-row:hover{background:var(--ms-soft);}
 	.ms365cal-head{display:flex;align-items:stretch;gap:10px;}
-	.ms365cal-times{flex:0 0 auto;width:46px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;padding:10px 0;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.25;}
+	.ms365cal-times{flex:0 0 auto;width:46px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;text-align:right;padding:10px 0;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.25;}
 	.ms365cal-t1{font-weight:600;opacity:.85;}
 	.ms365cal-t2{opacity:.5;}
 	.ms365cal-rail{width:4px;border-radius:999px;flex:0 0 auto;margin:10px 0;}

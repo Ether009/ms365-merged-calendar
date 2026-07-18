@@ -89,7 +89,9 @@ filter `ms365cal_client_ip` if behind a trusted proxy).
   event running *through* today (started earlier, ends later) is pinned to today by the
   server (`$today0`) so it stays visible rather than hiding in the past group.
 - Each row is `[times] [color rail] [body]`: start time (`t1`) at the top of the rail,
-  end time (`t2`) at the bottom (all-day → `Heldag`). Collapsed body = title, category
+  end time (`t2`) at the bottom. Single-day all-day → `Heldag`; a **multi-day** event
+  shows its start date/time at the top and end date/time at the bottom (all-day skips the
+  time) so the span is visible without expanding. Collapsed body = title, category
   pill, and the recurrence pattern pinned to the **bottom** (`.ms365cal-recur-line`,
   `margin-top:auto`) so it lines up with the end time. Titles are expand/collapse
   **buttons** (accordion — one open). Detail panel shows: when, the **full event body**
