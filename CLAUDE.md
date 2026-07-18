@@ -162,15 +162,32 @@ mkdir -p ms365-merged-calendar && cp ms365-merged-calendar.php ms365-merged-cale
 zip -r ms365-merged-calendar.zip ms365-merged-calendar
 ```
 
-A single `.php` dropped into `wp-content/plugins/` also works. No DB schema, no
-activation hooks — deactivation fully reverts.
+A single `.php` dropped into `wp-content/plugins/` also works (self-update inactive
+in that case — the updater lives in the bundled `plugin-update-checker/` folder). No
+DB schema, no activation hooks — deactivation fully reverts.
+
+## Releases & self-update
+
+Repo: **[Ether009/ms365-merged-calendar](https://github.com/Ether009/ms365-merged-calendar)**
+(public). The plugin self-updates in wp-admin from GitHub **Releases** via a vendored
+[plugin-update-checker](https://github.com/YahnisElsts/plugin-update-checker) v5
+(`ms365cal_init_updates()`). `enableReleaseAssets()` prefers the release's attached zip
+and falls back to GitHub's source archive.
+
+Two GitHub Actions workflows:
+- `.github/workflows/lint.yml` — runs `php -l` + `phpcs --standard=WordPress-Extra` on
+  every push/PR (the golden-rule checks). This repo has **no local PHP**, so CI is the
+  verification path for the main file.
+- `.github/workflows/release.yml` — on a `v*` tag push, builds the installable zip
+  (top folder = slug, dev files excluded) and publishes a Release with it attached.
+
+**Cutting a release:** bump the `Version:` header in the plugin file (this is what
+drives whether an update is offered — it must match / exceed the tag), then
+`git tag vX.Y.Z && git push --tags`. The vendored library is not linted (WPCS runs on
+`ms365-merged-calendar.php` only).
 
 ## Known items / possible next work
 
-- **Self-update** — not implemented. Recommended: GitHub releases +
-  [YahnisElsts/plugin-update-checker](https://github.com/YahnisElsts/plugin-update-checker)
-  (single bundled file, ~15 lines to wire to a repo). Gives one-click updates in
-  wp-admin from a repo you control.
 - `show_outlook` currently gates *rendering* only; `webLink` is still sent to the
   browser. Could gate server-side so it never leaves the server when disabled.
 - `MS365CAL_MAX_WINDOW` (62) is a code constant, not a UI field (deliberate safety bound).
@@ -195,3 +212,6 @@ activation hooks — deactivation fully reverts.
     recurrence shown in the list, and click-to-expand accordion (replaced the
     title→Outlook link).
 12. Outlook link made an opt-in setting (default off).
+13. Published to GitHub (Ether009/ms365-merged-calendar, public). Self-update wired via
+    bundled plugin-update-checker v5 + a tag-driven release workflow; lint CI enforces
+    `php -l` + WordPress-Extra (no local PHP on this box).
