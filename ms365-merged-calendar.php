@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.0.2
+ * Version:           2.0.3
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -19,6 +19,7 @@ define( 'MS365CAL_RATE_MAX', 30 );   // max REST requests per IP per window (0 =
 define( 'MS365CAL_RATE_WINDOW', 60 ); // rate-limit window, seconds
 define( 'MS365CAL_BACKOFF_MAX', 300 ); // max seconds to pause Graph calls after a 429/503
 define( 'MS365CAL_MAX_PAGES', 20 );    // safety cap on Graph nextLink pages per calendar (×100 events)
+define( 'MS365CAL_MAX_MASTERS', 200 ); // recurrence series masters resolved per request (via $batch, 20/call)
 
 /**
  * ---------------------------------------------------------------------------
@@ -160,13 +161,15 @@ function ms365cal_view_url( $cal, $start_iso, $end_iso ) {
 }
 
 /**
- * Base /events URL for a calendar, used to fetch a recurring series master.
+ * Relative ($batch-friendly) base for a calendar's /events collection: the path
+ * without the Graph host, e.g. "/groups/{id}/events" or "/users/{addr}/events".
+ * Used to build $batch sub-request URLs when resolving recurring series masters.
  */
-function ms365cal_events_base( $cal ) {
+function ms365cal_events_rel_base( $cal ) {
 	$source = rawurlencode( $cal['source'] );
 	return ( 'mailbox' === $cal['type'] )
-		? "https://graph.microsoft.com/v1.0/users/{$source}/events"
-		: "https://graph.microsoft.com/v1.0/groups/{$source}/events";
+		? "/users/{$source}/events"
+		: "/groups/{$source}/events";
 }
 
 /**
@@ -238,46 +241,87 @@ function ms365cal_format_recurrence( $rec ) {
 }
 
 /**
- * Fetch a recurring series master and format its recurrence. Deduplicated and
- * capped per request so many occurrences of the same series cost one call, and
- * a pathological window can't fan out into unbounded master fetches.
+ * Resolve a set of recurring-series master IDs (for one calendar) to human-readable
+ * recurrence strings using Microsoft Graph's $batch endpoint — up to 20 masters per
+ * request instead of one GET each. The caller passes de-duplicated IDs; a per-request
+ * budget (MS365CAL_MAX_MASTERS, shared across calendars via a static) bounds how many
+ * are resolved so a pathological window can't fan out without limit. Anything not
+ * resolved (over budget, HTTP failure, or a master with no pattern) is simply omitted
+ * from the returned map, and the caller shows a generic "Recurring event".
+ *
+ * @param array  $cal        Calendar config.
+ * @param array  $master_ids Series-master IDs to resolve.
+ * @param string $token      Graph bearer token.
+ * @return array Map of master_id => recurrence text, for the ones resolved.
  */
-function ms365cal_recurrence_text( $cal, $master_id, $token ) {
-	static $memo    = array();
-	static $fetches = 0;
+function ms365cal_fetch_recurrence_map( $cal, $master_ids, $token ) {
+	static $budget = MS365CAL_MAX_MASTERS;
 
-	$key = $cal['slug'] . '|' . $master_id;
-	if ( isset( $memo[ $key ] ) ) {
-		return $memo[ $key ];
-	}
-	if ( $fetches >= 40 ) {
-		$memo[ $key ] = 'Recurring event';
-		return $memo[ $key ];
+	$map        = array();
+	$master_ids = array_values( array_unique( $master_ids ) );
+	if ( empty( $master_ids ) || $budget <= 0 ) {
+		return $map;
 	}
 
-	$url  = add_query_arg( array( '$select' => 'recurrence' ), ms365cal_events_base( $cal ) . '/' . rawurlencode( $master_id ) );
-	$resp = ms365cal_http_get(
-		$url,
-		array(
-			'timeout' => 15,
-			'headers' => array( 'Authorization' => 'Bearer ' . $token ),
-		)
-	);
-	++$fetches;
+	$master_ids = array_slice( $master_ids, 0, $budget );
+	$budget     = $budget - count( $master_ids );
+	$base       = ms365cal_events_rel_base( $cal );
 
-	$text = '';
-	if ( ! is_wp_error( $resp ) && 200 === (int) wp_remote_retrieve_response_code( $resp ) ) {
-		$b = json_decode( wp_remote_retrieve_body( $resp ), true );
-		if ( isset( $b['recurrence'] ) && is_array( $b['recurrence'] ) ) {
-			$text = ms365cal_format_recurrence( $b['recurrence'] );
+	foreach ( array_chunk( $master_ids, 20 ) as $chunk ) {
+		$requests = array();
+		$id_map   = array(); // batch sub-request id => master_id.
+		foreach ( $chunk as $i => $mid ) {
+			$rid            = (string) $i;
+			$id_map[ $rid ] = $mid;
+			$requests[]     = array(
+				'id'     => $rid,
+				'method' => 'GET',
+				'url'    => $base . '/' . rawurlencode( $mid ) . '?$select=recurrence',
+			);
+		}
+
+		$resp = wp_remote_post(
+			'https://graph.microsoft.com/v1.0/$batch',
+			array(
+				'timeout' => 20,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $token,
+					'Content-Type'  => 'application/json',
+					'Accept'        => 'application/json',
+				),
+				'body'    => wp_json_encode( array( 'requests' => $requests ) ),
+			)
+		);
+
+		if ( is_wp_error( $resp ) || 200 !== (int) wp_remote_retrieve_response_code( $resp ) ) {
+			continue; // whole chunk unresolved; caller falls back to the generic label.
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
+		if ( empty( $body['responses'] ) || ! is_array( $body['responses'] ) ) {
+			continue;
+		}
+
+		foreach ( $body['responses'] as $sub ) {
+			$rid = isset( $sub['id'] ) ? (string) $sub['id'] : '';
+			if ( '' === $rid || ! isset( $id_map[ $rid ] ) ) {
+				continue;
+			}
+
+			$status = isset( $sub['status'] ) ? (int) $sub['status'] : 0;
+			$rec    = isset( $sub['body']['recurrence'] ) ? $sub['body']['recurrence'] : null;
+			if ( 200 !== $status || ! is_array( $rec ) ) {
+				continue;
+			}
+
+			$text = ms365cal_format_recurrence( $rec );
+			if ( '' !== $text ) {
+				$map[ $id_map[ $rid ] ] = $text;
+			}
 		}
 	}
-	if ( '' === $text ) {
-		$text = 'Recurring event';
-	}
 
-	$memo[ $key ] = $text;
-	return $text;
+	return $map;
 }
 
 /**
@@ -360,9 +404,10 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 		$window_start = new DateTime( 'now', $zone );
 	}
 
-	$out  = array();
-	$url  = ms365cal_view_url( $cal, $start_iso, $end_iso );
-	$page = 0;
+	$out          = array();
+	$need_masters = array(); // seriesMasterId => true, resolved in one $batch pass after paging.
+	$url          = ms365cal_view_url( $cal, $start_iso, $end_iso );
+	$page         = 0;
 
 	while ( $url && $page < MS365CAL_MAX_PAGES ) {
 		++$page;
@@ -441,17 +486,21 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 					: ( $allday ? 'All day' : wp_date( $time_fmt, $st->getTimestamp(), $zone ) );
 
 				// Recurrence: calendarView returns expanded occurrences; the pattern
-				// lives on the series master, which we fetch once per series.
+				// lives on the series master. Collect the master IDs now and resolve
+				// them together via $batch after paging (see below); until then, mark
+				// the row generic. Occurrences/exceptions with no master stay generic.
 				$recur     = '';
 				$master_id = isset( $e['seriesMasterId'] ) ? $e['seriesMasterId'] : '';
 				$etype     = isset( $e['type'] ) ? $e['type'] : '';
 				if ( '' !== $master_id ) {
-					$recur = ms365cal_recurrence_text( $cal, $master_id, $token );
+					$recur = 'Recurring event';
+
+					$need_masters[ $master_id ] = true;
 				} elseif ( in_array( $etype, array( 'occurrence', 'exception' ), true ) ) {
 					$recur = 'Recurring event';
 				}
 
-				$out[] = array(
+				$row = array(
 					'cal'      => $cal['slug'],
 					'title'    => isset( $e['subject'] ) && '' !== $e['subject'] ? $e['subject'] : '(no subject)',
 					'sort'     => $eff->format( 'Y-m-d\TH:i:s' ),
@@ -464,12 +513,28 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 					'joinUrl'  => isset( $e['onlineMeeting']['joinUrl'] ) ? $e['onlineMeeting']['joinUrl'] : '',
 					'link'     => isset( $e['webLink'] ) ? $e['webLink'] : '',
 				);
+				if ( '' !== $master_id ) {
+					$row['_master'] = $master_id; // temp key, stripped after resolution.
+				}
+				$out[] = $row;
 			}
 		}
 
 		// Follow pagination. The nextLink is an absolute URL carrying the skiptoken
 		// plus the original $select/$top, so pass it through unchanged.
 		$url = isset( $body['@odata.nextLink'] ) ? $body['@odata.nextLink'] : '';
+	}
+
+	// One batched pass to turn the collected series-master IDs into readable
+	// recurrence strings, then drop the temp key so it never reaches the client.
+	$recur_map = ms365cal_fetch_recurrence_map( $cal, array_keys( $need_masters ), $token );
+	foreach ( $out as $idx => $row ) {
+		if ( isset( $row['_master'] ) ) {
+			if ( isset( $recur_map[ $row['_master'] ] ) ) {
+				$out[ $idx ]['recur'] = $recur_map[ $row['_master'] ];
+			}
+			unset( $out[ $idx ]['_master'] );
+		}
 	}
 
 	return array(

@@ -54,10 +54,14 @@ subject,start,end,location,isAllDay,onlineMeeting,webLink,type,seriesMasterId. T
 **Pagination** — `ms365cal_fetch_one()` follows `@odata.nextLink`, capped at
 `MS365CAL_MAX_PAGES` (20) × 100 events/page.
 
-**Recurrence** — calendarView returns expanded occurrences *without* the pattern, so
-`ms365cal_recurrence_text()` fetches each series master once (deduped + capped at 40
-per request via a static memo) and `ms365cal_format_recurrence()` renders a readable
-string like "Repeats weekly on Mon, Wed until 1 Dec 2026".
+**Recurrence** — calendarView returns expanded occurrences *without* the pattern.
+`ms365cal_fetch_one()` collects the distinct `seriesMasterId`s while paging, then
+`ms365cal_fetch_recurrence_map()` resolves them in one pass via Graph's **`$batch`**
+endpoint (20 masters per request, relative URLs from `ms365cal_events_rel_base()`),
+bounded per request by `MS365CAL_MAX_MASTERS` (200) shared across calendars via a
+static budget. `ms365cal_format_recurrence()` renders a readable string like
+"Repeats weekly on Mon, Wed until 1 Dec 2026"; anything unresolved (over budget, HTTP
+failure, or no pattern) falls back to a generic "Recurring event".
 
 **Caching / resilience** (`ms365cal_events_window()`)
 - Per-window transient keyed by `slugs|start|days|tz`, payload `{fetched, events}`.
@@ -221,3 +225,8 @@ drives whether an update is offered — it must match / exceed the tag), then
     the wrong day and disagreed with their group. `wp_date()` now takes the plugin zone
     explicitly. (Minor sibling not yet addressed: the recurrence "until" date in
     `ms365cal_format_recurrence()`.)
+16. Recurrence master resolution now uses Graph `$batch` (20/request, budget 200)
+    instead of up-to-40 individual GETs, so large multi-calendar views show real
+    patterns for far more events instead of the generic "Recurring event" fallback.
+    Replaced `ms365cal_recurrence_text()`/`ms365cal_events_base()` with
+    `ms365cal_fetch_recurrence_map()`/`ms365cal_events_rel_base()`.
