@@ -290,3 +290,8 @@ exists on a site once it's running 2.0.4+.
     outlook.body-content-type="text"` instead of the 255-char `bodyPreview`); location
     dropped from the collapsed meta (detail-only); recurrence moved out of the meta line
     to a bottom-aligned `.ms365cal-recur-line` that lines up with the end time.
+23. Multi-day events show start date/time (top) and end date/time (bottom) in the time
+    column so the span is visible without expanding (all-day skips the time); restored
+    the end date that the left-column move had dropped. Self-update now calls
+    `ms365cal_flush_cache()` after a version change, so event-rendering changes take
+    effect immediately instead of waiting out the per-window cache (`cache_minutes`).
