@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.12.1
+ * Version:           2.13.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -224,6 +224,17 @@ function ms365cal_view_url( $cal, $start_iso, $end_iso, $top, $lazy_body ) {
 		),
 		$base
 	);
+}
+
+/**
+ * Auto-detect group vs. shared-mailbox from the source value itself, instead
+ * of making the admin pick a type: a group's source is always an object-ID
+ * GUID (8-4-4-4-12 hex), a shared mailbox's is always an email address —
+ * the two formats never overlap, so this is unambiguous.
+ */
+function ms365cal_detect_calendar_type( $source ) {
+	$is_guid = (bool) preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', trim( $source ) );
+	return $is_guid ? 'group' : 'mailbox';
 }
 
 /**
@@ -2650,7 +2661,7 @@ function ms365cal_settings_page() {
 				'slug'    => $slug,
 				'label'   => sanitize_text_field( wp_unslash( $row['label'] ?? $slug ) ),
 				'color'   => $color,
-				'type'    => ( 'mailbox' === ( $row['type'] ?? '' ) ) ? 'mailbox' : 'group',
+				'type'    => ms365cal_detect_calendar_type( $src ),
 				'source'  => $src,
 				'default' => ! empty( $row['default'] ),
 			);
@@ -2699,10 +2710,11 @@ function ms365cal_settings_page() {
 
 			<div class="ms365cal-tab-panel" data-tab="calendars">
 				<p>For a <strong>group</strong>, the source is the group's object ID (GUID).
-				For a <strong>shared mailbox</strong>, the source is its email address.</p>
+				For a <strong>shared mailbox</strong>, the source is its email address. Which one it
+				is gets detected from that format automatically — no need to say which.</p>
 				<table class="widefat" id="ms365cal-rows">
 					<thead><tr>
-						<th>Label</th><th>Slug</th><th>Type</th><th>Source (GUID or email)</th><th>Colour</th><th>On by default</th><th></th>
+						<th>Label</th><th>Slug</th><th>Source (GUID or email)</th><th>Colour</th><th>On by default</th><th></th>
 					</tr></thead>
 					<tbody>
 					<?php
@@ -2712,7 +2724,6 @@ function ms365cal_settings_page() {
 							'slug'    => '',
 							'label'   => '',
 							'color'   => $palette[0]['primary'],
-							'type'    => 'group',
 							'source'  => '',
 							'default' => true,
 						),
@@ -2726,12 +2737,6 @@ function ms365cal_settings_page() {
 						<tr>
 							<td><input type="text" name="cal[<?php echo (int) $i; ?>][label]" value="<?php echo esc_attr( $c['label'] ); ?>"></td>
 							<td><input type="text" name="cal[<?php echo (int) $i; ?>][slug]" value="<?php echo esc_attr( $c['slug'] ); ?>"></td>
-							<td>
-								<select name="cal[<?php echo (int) $i; ?>][type]">
-									<option value="group"   <?php selected( $c['type'], 'group' ); ?>>Group</option>
-									<option value="mailbox" <?php selected( $c['type'], 'mailbox' ); ?>>Shared mailbox</option>
-								</select>
-							</td>
 							<td><input type="text" name="cal[<?php echo (int) $i; ?>][source]" class="regular-text" value="<?php echo esc_attr( $c['source'] ); ?>"></td>
 							<td>
 								<div class="ms365cal-color-picker">
