@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.10.1
+ * Version:           2.11.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1924,143 +1924,131 @@ function ms365cal_rest_event_body( WP_REST_Request $req ) {
  * ---------------------------------------------------------------------------
  *  Colour palette
  * ---------------------------------------------------------------------------
- *  25 preset colour sets, replacing free-text hex entry. Each set is a
- *  {primary, text, supplement} triple generated from evenly-spaced hues (18
- *  spaced 20° apart, plus 7 muted/dark variants for extra separation beyond
- *  hue rotation alone — verified pairwise for perceptual distinctness) so
- *  they stay visually distinct even at 25 entries:
- *    - primary:    the rail / picker-dot colour (bold, saturated).
+ *  18 preset colour sets, replacing free-text hex entry — the named hues from
+ *  Tailwind CSS's default palette (a widely-used, purpose-built set for
+ *  exactly this kind of categorical colour-coding), using each hue's 500/800/
+ *  100 shade for primary/text/supplement respectively. Tailwind's own near-
+ *  neighbour hues (slate/gray/zinc/stone, or amber/yellow) are deliberately
+ *  not all included — only one representative grey (slate) is kept, so every
+ *  option stays visually distinct rather than padding the list with near-
+ *  duplicates.
+ *    - primary:    the rail / picker-dot colour (Tailwind's *-500).
  *    - text:       for text sitting on that set's own supplement pill —
- *                  chosen per set for contrast, not hardcoded black.
+ *                  chosen per set for contrast (Tailwind's *-800), not
+ *                  hardcoded black.
  *    - supplement: the pill background (calendar-picker chip, and the
- *                  category-label pill in the event list).
+ *                  category-label pill in the event list) — Tailwind's
+ *                  *-100.
  */
 function ms365cal_color_palette() {
 	return array(
 		array(
-			'primary'    => '#CE2727',
-			'text'       => '#610F0F',
-			'supplement' => '#F0DBDB',
+			'name'       => 'Slate',
+			'primary'    => '#64748B',
+			'text'       => '#1E293B',
+			'supplement' => '#F1F5F9',
 		),
 		array(
-			'primary'    => '#CE5F27',
-			'text'       => '#612A0F',
-			'supplement' => '#F0E2DB',
+			'name'       => 'Red',
+			'primary'    => '#EF4444',
+			'text'       => '#991B1B',
+			'supplement' => '#FEE2E2',
 		),
 		array(
-			'primary'    => '#CE9627',
-			'text'       => '#61460F',
-			'supplement' => '#F0E9DB',
+			'name'       => 'Orange',
+			'primary'    => '#F97316',
+			'text'       => '#9A3412',
+			'supplement' => '#FFEDD5',
 		),
 		array(
-			'primary'    => '#BFBF18',
-			'text'       => '#67670A',
-			'supplement' => '#F3F3D8',
+			'name'       => 'Amber',
+			'primary'    => '#F59E0B',
+			'text'       => '#92400E',
+			'supplement' => '#FEF3C7',
 		),
 		array(
-			'primary'    => '#87BF18',
-			'text'       => '#48670A',
-			'supplement' => '#EAF3D8',
+			'name'       => 'Yellow',
+			'primary'    => '#EAB308',
+			'text'       => '#854D0E',
+			'supplement' => '#FEF9C3',
 		),
 		array(
-			'primary'    => '#4FBF18',
-			'text'       => '#29670A',
-			'supplement' => '#E1F3D8',
+			'name'       => 'Lime',
+			'primary'    => '#84CC16',
+			'text'       => '#3F6212',
+			'supplement' => '#ECFCCB',
 		),
 		array(
-			'primary'    => '#27CE27',
-			'text'       => '#0F610F',
-			'supplement' => '#DBF0DB',
+			'name'       => 'Green',
+			'primary'    => '#22C55E',
+			'text'       => '#166534',
+			'supplement' => '#DCFCE7',
 		),
 		array(
-			'primary'    => '#27CE5F',
-			'text'       => '#0F612A',
-			'supplement' => '#DBF0E2',
+			'name'       => 'Emerald',
+			'primary'    => '#10B981',
+			'text'       => '#065F46',
+			'supplement' => '#D1FAE5',
 		),
 		array(
-			'primary'    => '#27CE96',
-			'text'       => '#0F6146',
-			'supplement' => '#DBF0E9',
+			'name'       => 'Teal',
+			'primary'    => '#14B8A6',
+			'text'       => '#115E59',
+			'supplement' => '#CCFBF1',
 		),
 		array(
-			'primary'    => '#27CECE',
-			'text'       => '#0F6161',
-			'supplement' => '#DBF0F0',
+			'name'       => 'Cyan',
+			'primary'    => '#06B6D4',
+			'text'       => '#155E75',
+			'supplement' => '#CFFAFE',
 		),
 		array(
-			'primary'    => '#2796CE',
-			'text'       => '#0F4661',
-			'supplement' => '#DBE9F0',
+			'name'       => 'Sky',
+			'primary'    => '#0EA5E9',
+			'text'       => '#075985',
+			'supplement' => '#E0F2FE',
 		),
 		array(
-			'primary'    => '#275FCE',
-			'text'       => '#0F2A61',
-			'supplement' => '#DBE2F0',
+			'name'       => 'Blue',
+			'primary'    => '#3B82F6',
+			'text'       => '#1E40AF',
+			'supplement' => '#DBEAFE',
 		),
 		array(
-			'primary'    => '#2727CE',
-			'text'       => '#0F0F61',
-			'supplement' => '#DBDBF0',
+			'name'       => 'Indigo',
+			'primary'    => '#6366F1',
+			'text'       => '#3730A3',
+			'supplement' => '#E0E7FF',
 		),
 		array(
-			'primary'    => '#5F27CE',
-			'text'       => '#2A0F61',
-			'supplement' => '#E2DBF0',
+			'name'       => 'Violet',
+			'primary'    => '#8B5CF6',
+			'text'       => '#5B21B6',
+			'supplement' => '#EDE9FE',
 		),
 		array(
-			'primary'    => '#9627CE',
-			'text'       => '#460F61',
-			'supplement' => '#E9DBF0',
+			'name'       => 'Purple',
+			'primary'    => '#A855F7',
+			'text'       => '#6B21A8',
+			'supplement' => '#F3E8FF',
 		),
 		array(
-			'primary'    => '#CE27CE',
-			'text'       => '#610F61',
-			'supplement' => '#F0DBF0',
+			'name'       => 'Fuchsia',
+			'primary'    => '#D946EF',
+			'text'       => '#86198F',
+			'supplement' => '#FAE8FF',
 		),
 		array(
-			'primary'    => '#CE2796',
-			'text'       => '#610F46',
-			'supplement' => '#F0DBE9',
+			'name'       => 'Pink',
+			'primary'    => '#EC4899',
+			'text'       => '#9D174D',
+			'supplement' => '#FCE7F3',
 		),
 		array(
-			'primary'    => '#CE275F',
-			'text'       => '#610F2A',
-			'supplement' => '#F0DBE2',
-		),
-		array(
-			'primary'    => '#315381',
-			'text'       => '#222C39',
-			'supplement' => '#E2E5E9',
-		),
-		array(
-			'primary'    => '#742911',
-			'text'       => '#472115',
-			'supplement' => '#F1E0DA',
-		),
-		array(
-			'primary'    => '#397326',
-			'text'       => '#273C20',
-			'supplement' => '#E3EBE0',
-		),
-		array(
-			'primary'    => '#A33362',
-			'text'       => '#3D1F2B',
-			'supplement' => '#EBE0E5',
-		),
-		array(
-			'primary'    => '#216353',
-			'text'       => '#203C35',
-			'supplement' => '#E0EBE8',
-		),
-		array(
-			'primary'    => '#4A328F',
-			'text'       => '#27213B',
-			'supplement' => '#E3E1EA',
-		),
-		array(
-			'primary'    => '#777022',
-			'text'       => '#3E3B1E',
-			'supplement' => '#ECEBDF',
+			'name'       => 'Rose',
+			'primary'    => '#F43F5E',
+			'text'       => '#9F1239',
+			'supplement' => '#FFE4E6',
 		),
 	);
 }
@@ -2711,8 +2699,6 @@ function ms365cal_settings_page() {
 	.ms365cal-help:hover .ms365cal-tip,.ms365cal-help:focus .ms365cal-tip{display:block;}
 	.ms365cal-tab-panel{display:none;}
 	.ms365cal-tab-panel.is-active{display:block;}
-	.ms365cal-color-preview{display:inline-block;width:20px;height:20px;border-radius:50%;vertical-align:middle;margin-right:6px;box-shadow:0 0 0 1px rgba(0,0,0,.15) inset;}
-	.ms365cal-color-select{vertical-align:middle;}
 	</style>
 	<div class="wrap">
 		<h1>MS365 Merged Calendar</h1>
@@ -2762,10 +2748,9 @@ function ms365cal_settings_page() {
 							</td>
 							<td><input type="text" name="cal[<?php echo (int) $i; ?>][source]" class="regular-text" value="<?php echo esc_attr( $c['source'] ); ?>"></td>
 							<td>
-								<span class="ms365cal-color-preview" style="background:<?php echo esc_attr( $checked_set['primary'] ); ?>"></span>
 								<select name="cal[<?php echo (int) $i; ?>][color]" class="ms365cal-color-select">
-									<?php foreach ( $palette as $k => $set ) : ?>
-										<option value="<?php echo esc_attr( $set['primary'] ); ?>" style="background:<?php echo esc_attr( $set['primary'] ); ?>;color:<?php echo esc_attr( $set['text'] ); ?>" <?php selected( 0 === strcasecmp( $checked_set['primary'], $set['primary'] ) ); ?>>Color <?php echo (int) ( $k + 1 ); ?></option>
+									<?php foreach ( $palette as $set ) : ?>
+										<option value="<?php echo esc_attr( $set['primary'] ); ?>" style="color:<?php echo esc_attr( $set['text'] ); ?>" <?php selected( 0 === strcasecmp( $checked_set['primary'], $set['primary'] ) ); ?>>&#9473;&#9473;&#9473;&#9473;&#9473; <?php echo esc_html( $set['name'] ); ?></option>
 									<?php endforeach; ?>
 								</select>
 							</td>
@@ -2886,20 +2871,11 @@ function ms365cal_settings_page() {
 					el.value='';
 				}
 			});
-			var colorSelect=tr.querySelector('.ms365cal-color-select');
-			var preview=tr.querySelector('.ms365cal-color-preview');
-			if(colorSelect&&preview)preview.style.background=colorSelect.value;
 			body.appendChild(tr);idx++;
 		});
 		body.addEventListener('click',function(e){
 			if(e.target.classList.contains('ms365cal-del')){
 				if(body.querySelectorAll('tr').length>1)e.target.closest('tr').remove();
-			}
-		});
-		body.addEventListener('change',function(e){
-			if(e.target.classList.contains('ms365cal-color-select')){
-				var preview=e.target.previousElementSibling;
-				if(preview&&preview.classList.contains('ms365cal-color-preview'))preview.style.background=e.target.value;
 			}
 		});
 	})();
