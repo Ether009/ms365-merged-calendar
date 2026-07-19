@@ -8,6 +8,9 @@
 /phpcsutils/
 /phpcsextra/
 
+# Dev/agent-context notes — kept locally, not published to the repo
+/CLAUDE.md
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
