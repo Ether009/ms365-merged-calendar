@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.10.0
+ * Version:           2.10.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2711,11 +2711,8 @@ function ms365cal_settings_page() {
 	.ms365cal-help:hover .ms365cal-tip,.ms365cal-help:focus .ms365cal-tip{display:block;}
 	.ms365cal-tab-panel{display:none;}
 	.ms365cal-tab-panel.is-active{display:block;}
-	.ms365cal-swatches{display:flex;flex-wrap:wrap;gap:5px;max-width:210px;}
-	.ms365cal-swatches input{position:absolute;opacity:0;width:1px;height:1px;}
-	.ms365cal-swatches label{display:inline-block;width:20px;height:20px;border-radius:50%;cursor:pointer;box-shadow:0 0 0 1px rgba(0,0,0,.15) inset;}
-	.ms365cal-swatches input:checked+label{box-shadow:0 0 0 2px #fff,0 0 0 4px #1d2327;}
-	.ms365cal-swatches input:focus-visible+label{outline:2px solid #2271b1;outline-offset:2px;}
+	.ms365cal-color-preview{display:inline-block;width:20px;height:20px;border-radius:50%;vertical-align:middle;margin-right:6px;box-shadow:0 0 0 1px rgba(0,0,0,.15) inset;}
+	.ms365cal-color-select{vertical-align:middle;}
 	</style>
 	<div class="wrap">
 		<h1>MS365 Merged Calendar</h1>
@@ -2749,11 +2746,10 @@ function ms365cal_settings_page() {
 						),
 					);
 					foreach ( $rows as $i => $c ) :
-						// The checked swatch: an exact palette match, or the closest one for a
-						// colour saved before this palette existed -- ensures a radio is always
-						// checked (an unchecked group submits nothing at all) and that legacy
-						// colours still land somewhere sensible on first view.
-						$checked_primary = ms365cal_color_set( $c['color'] )['primary'];
+						// The selected option: an exact palette match, or the closest one for a
+						// colour saved before this palette existed, so legacy colours still land
+						// somewhere sensible on first view instead of showing nothing selected.
+						$checked_set = ms365cal_color_set( $c['color'] );
 						?>
 						<tr>
 							<td><input type="text" name="cal[<?php echo (int) $i; ?>][label]" value="<?php echo esc_attr( $c['label'] ); ?>"></td>
@@ -2766,13 +2762,12 @@ function ms365cal_settings_page() {
 							</td>
 							<td><input type="text" name="cal[<?php echo (int) $i; ?>][source]" class="regular-text" value="<?php echo esc_attr( $c['source'] ); ?>"></td>
 							<td>
-								<div class="ms365cal-swatches">
+								<span class="ms365cal-color-preview" style="background:<?php echo esc_attr( $checked_set['primary'] ); ?>"></span>
+								<select name="cal[<?php echo (int) $i; ?>][color]" class="ms365cal-color-select">
 									<?php foreach ( $palette as $k => $set ) : ?>
-										<?php $radio_id = 'ms365cal-color-' . (int) $i . '-' . (int) $k; ?>
-										<input type="radio" id="<?php echo esc_attr( $radio_id ); ?>" name="cal[<?php echo (int) $i; ?>][color]" value="<?php echo esc_attr( $set['primary'] ); ?>" <?php checked( 0 === strcasecmp( $checked_primary, $set['primary'] ) ); ?>>
-										<label for="<?php echo esc_attr( $radio_id ); ?>" style="background:<?php echo esc_attr( $set['primary'] ); ?>" title="<?php echo esc_attr( $set['primary'] ); ?>"></label>
+										<option value="<?php echo esc_attr( $set['primary'] ); ?>" style="background:<?php echo esc_attr( $set['primary'] ); ?>;color:<?php echo esc_attr( $set['text'] ); ?>" <?php selected( 0 === strcasecmp( $checked_set['primary'], $set['primary'] ) ); ?>>Color <?php echo (int) ( $k + 1 ); ?></option>
 									<?php endforeach; ?>
-								</div>
+								</select>
 							</td>
 							<td style="text-align:center"><input type="checkbox" name="cal[<?php echo (int) $i; ?>][default]" <?php checked( ! empty( $c['default'] ) ); ?>></td>
 							<td><button type="button" class="button ms365cal-del">Remove</button></td>
@@ -2883,14 +2878,7 @@ function ms365cal_settings_page() {
 			var tr=body.querySelector('tr').cloneNode(true);
 			tr.querySelectorAll('input,select').forEach(function(el){
 				el.name=el.name.replace(/cal\[\d+\]/,'cal['+idx+']');
-				if(el.type==='radio'){
-					var oldId=el.id;
-					var newId=oldId.replace(/^ms365cal-color-\d+-/,'ms365cal-color-'+idx+'-');
-					el.id=newId;
-					var lbl=tr.querySelector('label[for="'+oldId+'"]');
-					if(lbl)lbl.setAttribute('for',newId);
-					el.checked=false;
-				}else if(el.type==='checkbox'){
+				if(el.type==='checkbox'){
 					el.checked=false;
 				}else if(el.tagName==='SELECT'){
 					el.selectedIndex=0;
@@ -2898,13 +2886,20 @@ function ms365cal_settings_page() {
 					el.value='';
 				}
 			});
-			var firstRadio=tr.querySelector('.ms365cal-swatches input[type="radio"]');
-			if(firstRadio)firstRadio.checked=true;
+			var colorSelect=tr.querySelector('.ms365cal-color-select');
+			var preview=tr.querySelector('.ms365cal-color-preview');
+			if(colorSelect&&preview)preview.style.background=colorSelect.value;
 			body.appendChild(tr);idx++;
 		});
 		body.addEventListener('click',function(e){
 			if(e.target.classList.contains('ms365cal-del')){
 				if(body.querySelectorAll('tr').length>1)e.target.closest('tr').remove();
+			}
+		});
+		body.addEventListener('change',function(e){
+			if(e.target.classList.contains('ms365cal-color-select')){
+				var preview=e.target.previousElementSibling;
+				if(preview&&preview.classList.contains('ms365cal-color-preview'))preview.style.background=e.target.value;
 			}
 		});
 	})();
