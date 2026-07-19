@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.5.0
+ * Version:           2.5.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -117,7 +117,7 @@ function ms365cal_get_settings() {
 		'rate_max'        => MS365CAL_RATE_MAX,
 		'rate_window'     => MS365CAL_RATE_WINDOW,
 		'show_outlook'    => false,
-		'show_recurrence' => true,
+		'show_recurrence' => false,
 		'events_top'      => 100,
 		'deploy_key'      => '',
 		'update_repo'     => '',
@@ -2187,7 +2187,7 @@ function ms365cal_settings_page() {
 				</td></tr>
 				<tr><th>Recurrence pattern</th><td>
 					<label><input type="checkbox" name="show_recurrence" <?php checked( ! empty( $s['show_recurrence'] ) ); ?>> Show a recurrence pattern (e.g. &ldquo;Repeats weekly on Mon, Wed&rdquo;) for recurring events</label>
-					<p class="description">On by default. <strong>Showing this requires an extra Microsoft Graph
+					<p class="description">Off by default. <strong>Showing this requires an extra Microsoft Graph
 					lookup per distinct recurring series</strong> to resolve the pattern, which can meaningfully
 					slow down a cold (uncached) load &mdash; on this plugin's own benchmarks it cost roughly as
 					much time as fetching the events themselves. Disabling it skips those lookups entirely (every
