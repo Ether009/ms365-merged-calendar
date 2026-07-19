@@ -62,6 +62,42 @@ For updates to actually be offered from whichever repo you configure:
   Without one, it falls back to GitHub's auto-generated source archive, which works
   but ships the whole repo as-is.
 
+### Instant updates (optional)
+
+WordPress only checks for plugin updates on its own background schedule (roughly every
+12 hours), so a release you've just published can sit unnoticed for a while even with
+Update source configured. For a site with no shell/SFTP access, the plugin exposes a
+secret-guarded endpoint that forces an immediate check-and-install instead of waiting:
+
+```
+POST /wp-json/ms365cal/v1/self-update
+Header: X-MS365CAL-Deploy-Key: <your key>
+```
+
+It re-checks the configured repo right away and, if a newer release exists, installs
+it on the spot — response is JSON with `from`/`to` versions and `reactivated` (whether
+the plugin had to be reactivated after the file swap, which WordPress does
+automatically mid-upgrade). It's a no-op (`updated: false`) if already current, and
+disabled outright (404) until a deploy key exists.
+
+**To set it up**, on **this same repo you already pointed Update source at**:
+
+1. **On the WordPress site** — Settings → MS365 Calendar → **Deploy key**: paste a
+   long random secret (or define `MS365CAL_DEPLOY_KEY` in `wp-config.php`, which takes
+   precedence). Blank keeps the endpoint disabled.
+2. **On the GitHub repo** — Settings → Secrets and variables → Actions:
+   - **Secret** `SITE_DEPLOY_KEY` — the same value as the deploy key above.
+   - **Variable** `DEPLOY_URL` — the site's base URL, e.g. `https://example.com`.
+
+Once both are set, `.github/workflows/release.yml`'s last step calls the endpoint
+automatically right after every release is published — pushing a `vX.Y.Z` tag now
+takes the site from tag to installed update in seconds, with no manual "check for
+updates" click needed. It's best-effort: if the trigger fails or isn't configured, the
+release still publishes normally and the site picks it up on its next periodic check.
+
+You can also call the endpoint yourself at any time (`curl`, a different CI system,
+etc.) — it doesn't have to go through this repo's Action.
+
 ## License
 
 GPL-2.0-or-later. The bundled plugin-update-checker library is MIT licensed
