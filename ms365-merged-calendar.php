@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.6.1
+ * Version:           2.7.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -109,20 +109,21 @@ function ms365cal_normalize_repo_url( $repo ) {
  */
 function ms365cal_get_settings() {
 	$defaults = array(
-		'tenant_id'       => '',
-		'client_id'       => '',
-		'client_secret'   => '',
-		'cache_minutes'   => 20,
-		'timezone'        => wp_timezone_string(),
-		'rate_max'        => MS365CAL_RATE_MAX,
-		'rate_window'     => MS365CAL_RATE_WINDOW,
-		'show_outlook'    => false,
-		'show_recurrence' => false,
-		'events_top'      => 100,
-		'lazy_body'       => true,
-		'deploy_key'      => '',
-		'update_repo'     => '',
-		'calendars'       => array(),
+		'tenant_id'           => '',
+		'client_id'           => '',
+		'client_secret'       => '',
+		'cache_minutes'       => 20,
+		'cache_grace_minutes' => 60,
+		'timezone'            => wp_timezone_string(),
+		'rate_max'            => MS365CAL_RATE_MAX,
+		'rate_window'         => MS365CAL_RATE_WINDOW,
+		'show_outlook'        => false,
+		'show_recurrence'     => false,
+		'events_top'          => 100,
+		'lazy_body'           => true,
+		'deploy_key'          => '',
+		'update_repo'         => '',
+		'calendars'           => array(),
 	);
 	$saved    = get_option( MS365CAL_OPTION, array() );
 	return wp_parse_args( is_array( $saved ) ? $saved : array(), $defaults );
@@ -1160,9 +1161,15 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
 /**
  * Merge + sort + cache a window of events for a set of calendar slugs.
  *
+ * $force_live skips both cache short-circuits below (fresh hit and
+ * stale-while-revalidate) and goes straight to the live-fetch path — used only
+ * by ms365cal_rest_refresh(), the background-refresh trigger fired from the
+ * stale-while-revalidate branch itself, so that call actually performs the
+ * live fetch instead of recursing into "serve stale, trigger a refresh" again.
+ *
  * @return array|WP_Error
  */
-function ms365cal_events_window( $slugs, $start_date, $days ) {
+function ms365cal_events_window( $slugs, $start_date, $days, $force_live = false ) {
 	$settings   = ms365cal_get_settings();
 	$tz         = $settings['timezone'] ? $settings['timezone'] : 'UTC';
 	$days       = min( MS365CAL_MAX_WINDOW, max( 1, (int) $days ) );
@@ -1206,7 +1213,20 @@ function ms365cal_events_window( $slugs, $start_date, $days ) {
 	$has_stale = is_array( $cached ) && isset( $cached['events'] );
 
 	// Fresh cache hit.
-	if ( $has_stale && ( $now - (int) $cached['fetched'] ) < $fresh ) {
+	if ( ! $force_live && $has_stale && ( $now - (int) $cached['fetched'] ) < $fresh ) {
+		return $cached['events'];
+	}
+
+	// Stale-while-revalidate: expired, but not by more than the grace window
+	// (settings['cache_grace_minutes']). Serve the old data immediately — the
+	// visitor never waits on a live Graph call for this — and fire a
+	// non-blocking background request to refresh it, so the next request finds
+	// a warm cache. This is what actually keeps things warm when an external
+	// pre-warm trigger's nominal interval and its real (possibly jittery)
+	// firing time don't quite line up with cache_minutes.
+	$grace = max( 0, (int) $settings['cache_grace_minutes'] ) * MINUTE_IN_SECONDS;
+	if ( ! $force_live && $has_stale && $grace > 0 && ( $now - (int) $cached['fetched'] ) < ( $fresh + $grace ) ) {
+		ms365cal_trigger_background_refresh( $slugs, $start_date, $days );
 		return $cached['events'];
 	}
 
@@ -1257,6 +1277,40 @@ function ms365cal_events_window( $slugs, $start_date, $days ) {
 		$keep
 	);
 	return $all;
+}
+
+/**
+ * Fire a non-blocking loopback request to /refresh so a stale-but-in-grace
+ * window (see ms365cal_events_window()) gets refreshed in the background
+ * instead of making the current visitor wait on a live Graph call — the same
+ * fire-and-forget technique WordPress's own spawn_cron() uses for wp-cron.php.
+ * A short lock transient stops concurrent visitors hitting the same stale
+ * window from each firing a duplicate refresh; it isn't released early on
+ * success since the lock's own short TTL (well under how long a real refresh
+ * takes) is enough to prevent a pile-up without needing that.
+ */
+function ms365cal_trigger_background_refresh( $slugs, $start_date, $days ) {
+	$lock_key = 'ms365cal_refresh_lock_' . md5( implode( ',', $slugs ) . '|' . $start_date . '|' . $days );
+	if ( get_transient( $lock_key ) ) {
+		return;
+	}
+	set_transient( $lock_key, 1, 30 );
+
+	wp_remote_post(
+		add_query_arg(
+			array(
+				'cals'  => implode( ',', $slugs ),
+				'start' => $start_date,
+				'days'  => $days,
+			),
+			rest_url( 'ms365cal/v1/refresh' )
+		),
+		array(
+			'timeout'   => 0.01,
+			'blocking'  => false,
+			'sslverify' => apply_filters( 'https_local_ssl_verify', false ),
+		)
+	);
 }
 
 /**
@@ -1436,6 +1490,27 @@ function ms365cal_register_rest() {
 				'id'  => array( 'sanitize_callback' => 'sanitize_text_field' ),
 			),
 			'callback'            => 'ms365cal_rest_event_body',
+		)
+	);
+
+	// Background-refresh trigger for the stale-while-revalidate path (see
+	// ms365cal_events_window() / ms365cal_trigger_background_refresh()). Not
+	// meant to be called directly by a visitor — the plugin fires this at
+	// itself as a non-blocking loopback request. Public (like /events) since it
+	// performs the exact same fetch-and-cache work a real visitor would trigger
+	// anyway, just rate-limited the same way to bound misuse.
+	register_rest_route(
+		'ms365cal/v1',
+		'/refresh',
+		array(
+			'methods'             => 'POST',
+			'permission_callback' => '__return_true',
+			'args'                => array(
+				'cals'  => array( 'sanitize_callback' => 'sanitize_text_field' ),
+				'start' => array( 'sanitize_callback' => 'sanitize_text_field' ),
+				'days'  => array( 'sanitize_callback' => 'absint' ),
+			),
+			'callback'            => 'ms365cal_rest_refresh',
 		)
 	);
 
@@ -1682,6 +1757,40 @@ function ms365cal_rest_events( WP_REST_Request $req ) {
 	}
 
 	return new WP_REST_Response( array( 'events' => $events ), 200 );
+}
+
+/**
+ * Background-refresh trigger for the stale-while-revalidate path in
+ * ms365cal_events_window() — see ms365cal_trigger_background_refresh() for
+ * where this gets called (the plugin firing a non-blocking request at itself,
+ * never meant to be hit directly by a visitor). $force_live=true makes the
+ * inner call actually perform the live fetch instead of finding the same
+ * still-stale cache and triggering yet another background refresh. The
+ * response is discarded by the caller (fire-and-forget), so what's returned
+ * here doesn't matter much beyond a 200.
+ */
+function ms365cal_rest_refresh( WP_REST_Request $req ) {
+	if ( ! ms365cal_rate_check() ) {
+		return new WP_REST_Response( array( 'error' => 'rate_limited' ), 429 );
+	}
+
+	$settings   = ms365cal_get_settings();
+	$configured = wp_list_pluck( $settings['calendars'], 'slug' );
+
+	$req_slugs = array_filter( array_map( 'sanitize_title', explode( ',', (string) $req->get_param( 'cals' ) ) ) );
+	$slugs     = array_values( array_intersect( $req_slugs, $configured ) );
+	if ( empty( $slugs ) ) {
+		$slugs = $configured;
+	}
+
+	$start = (string) $req->get_param( 'start' );
+	if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $start ) ) {
+		$start = wp_date( 'Y-m-d' );
+	}
+	$days = $req->get_param( 'days' ) ? (int) $req->get_param( 'days' ) : 7;
+
+	ms365cal_events_window( $slugs, $start, $days, true );
+	return new WP_REST_Response( array( 'ok' => true ), 200 );
 }
 
 /**
@@ -2345,14 +2454,15 @@ function ms365cal_settings_page() {
 		if ( '' !== $posted_secret ) {
 			$new['client_secret'] = $posted_secret;
 		}
-		$new['cache_minutes']   = max( 1, (int) ( $_POST['cache_minutes'] ?? 20 ) );
-		$new['timezone']        = sanitize_text_field( wp_unslash( $_POST['timezone'] ?? 'UTC' ) );
-		$new['rate_max']        = max( 0, (int) ( $_POST['rate_max'] ?? MS365CAL_RATE_MAX ) );
-		$new['rate_window']     = max( 1, (int) ( $_POST['rate_window'] ?? MS365CAL_RATE_WINDOW ) );
-		$new['show_outlook']    = ! empty( $_POST['show_outlook'] );
-		$new['show_recurrence'] = ! empty( $_POST['show_recurrence'] );
-		$new['events_top']      = max( 10, min( 999, (int) ( $_POST['events_top'] ?? 100 ) ) );
-		$new['lazy_body']       = ! empty( $_POST['lazy_body'] );
+		$new['cache_minutes']       = max( 1, (int) ( $_POST['cache_minutes'] ?? 20 ) );
+		$new['cache_grace_minutes'] = max( 0, (int) ( $_POST['cache_grace_minutes'] ?? 60 ) );
+		$new['timezone']            = sanitize_text_field( wp_unslash( $_POST['timezone'] ?? 'UTC' ) );
+		$new['rate_max']            = max( 0, (int) ( $_POST['rate_max'] ?? MS365CAL_RATE_MAX ) );
+		$new['rate_window']         = max( 1, (int) ( $_POST['rate_window'] ?? MS365CAL_RATE_WINDOW ) );
+		$new['show_outlook']        = ! empty( $_POST['show_outlook'] );
+		$new['show_recurrence']     = ! empty( $_POST['show_recurrence'] );
+		$new['events_top']          = max( 10, min( 999, (int) ( $_POST['events_top'] ?? 100 ) ) );
+		$new['lazy_body']           = ! empty( $_POST['lazy_body'] );
 
 		// Deploy key: like the client secret, a blank submission keeps the stored value;
 		// the explicit "clear" checkbox is the only way to erase it (disable the endpoint).
@@ -2418,6 +2528,16 @@ function ms365cal_settings_page() {
 					<p class="description">Stored in the database. For better security, define <code>MS365CAL_CLIENT_SECRET</code> in wp-config.php instead.</p>
 				</td></tr>
 				<tr><th>Cache (minutes)</th><td><input type="number" name="cache_minutes" min="1" value="<?php echo esc_attr( $s['cache_minutes'] ); ?>"></td></tr>
+				<tr><th>Cache grace (minutes)</th><td>
+					<input type="number" name="cache_grace_minutes" min="0" value="<?php echo esc_attr( $s['cache_grace_minutes'] ); ?>">
+					<p class="description">Once the cache above expires, keep serving the old data for up
+					to this many <em>extra</em> minutes instead of making the visitor wait on a live Graph
+					call — a background request refreshes it at the same time, so the next visitor gets
+					fresh data from a warm cache. Set to <code>0</code> to disable and always fetch live the
+					moment the cache expires (the old behaviour). Useful if you pre-warm the cache with an
+					external scheduled request (e.g. a GitHub Actions cron hitting the public events
+					endpoint) that doesn't fire on an exact schedule — this absorbs the jitter.</p>
+				</td></tr>
 				<tr><th>Timezone</th><td><input type="text" name="timezone" class="regular-text" value="<?php echo esc_attr( $s['timezone'] ); ?>"> <span class="description">e.g. Europe/Stockholm</span></td></tr>
 				<tr><th>Rate limit</th><td>
 					<input type="number" name="rate_max" min="0" value="<?php echo esc_attr( $s['rate_max'] ); ?>" style="width:6em">
