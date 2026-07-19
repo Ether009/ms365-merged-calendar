@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.11.0
+ * Version:           2.12.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1924,14 +1924,15 @@ function ms365cal_rest_event_body( WP_REST_Request $req ) {
  * ---------------------------------------------------------------------------
  *  Colour palette
  * ---------------------------------------------------------------------------
- *  18 preset colour sets, replacing free-text hex entry — the named hues from
+ *  14 preset colour sets, replacing free-text hex entry — named hues from
  *  Tailwind CSS's default palette (a widely-used, purpose-built set for
  *  exactly this kind of categorical colour-coding), using each hue's 500/800/
- *  100 shade for primary/text/supplement respectively. Tailwind's own near-
- *  neighbour hues (slate/gray/zinc/stone, or amber/yellow) are deliberately
- *  not all included — only one representative grey (slate) is kept, so every
- *  option stays visually distinct rather than padding the list with near-
- *  duplicates.
+ *  100 shade for primary/text/supplement respectively. Deliberately not the
+ *  full Tailwind set: near-neighbour hues (the other four greys besides
+ *  slate; yellow next to amber; sky next to cyan; violet next to purple;
+ *  rose next to red) are dropped so every remaining option stays visually
+ *  distinct at a glance — verified pairwise by RGB distance, worst case
+ *  (emerald vs teal) still clearly separable, most pairs far more so.
  *    - primary:    the rail / picker-dot colour (Tailwind's *-500).
  *    - text:       for text sitting on that set's own supplement pill —
  *                  chosen per set for contrast (Tailwind's *-800), not
@@ -1967,12 +1968,6 @@ function ms365cal_color_palette() {
 			'supplement' => '#FEF3C7',
 		),
 		array(
-			'name'       => 'Yellow',
-			'primary'    => '#EAB308',
-			'text'       => '#854D0E',
-			'supplement' => '#FEF9C3',
-		),
-		array(
 			'name'       => 'Lime',
 			'primary'    => '#84CC16',
 			'text'       => '#3F6212',
@@ -2003,12 +1998,6 @@ function ms365cal_color_palette() {
 			'supplement' => '#CFFAFE',
 		),
 		array(
-			'name'       => 'Sky',
-			'primary'    => '#0EA5E9',
-			'text'       => '#075985',
-			'supplement' => '#E0F2FE',
-		),
-		array(
 			'name'       => 'Blue',
 			'primary'    => '#3B82F6',
 			'text'       => '#1E40AF',
@@ -2019,12 +2008,6 @@ function ms365cal_color_palette() {
 			'primary'    => '#6366F1',
 			'text'       => '#3730A3',
 			'supplement' => '#E0E7FF',
-		),
-		array(
-			'name'       => 'Violet',
-			'primary'    => '#8B5CF6',
-			'text'       => '#5B21B6',
-			'supplement' => '#EDE9FE',
 		),
 		array(
 			'name'       => 'Purple',
@@ -2043,12 +2026,6 @@ function ms365cal_color_palette() {
 			'primary'    => '#EC4899',
 			'text'       => '#9D174D',
 			'supplement' => '#FCE7F3',
-		),
-		array(
-			'name'       => 'Rose',
-			'primary'    => '#F43F5E',
-			'text'       => '#9F1239',
-			'supplement' => '#FFE4E6',
 		),
 	);
 }
@@ -2699,6 +2676,14 @@ function ms365cal_settings_page() {
 	.ms365cal-help:hover .ms365cal-tip,.ms365cal-help:focus .ms365cal-tip{display:block;}
 	.ms365cal-tab-panel{display:none;}
 	.ms365cal-tab-panel.is-active{display:block;}
+	.ms365cal-color-picker{position:relative;display:inline-block;}
+	.ms365cal-color-trigger{display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid #8c8f94;border-radius:4px;background:#fff;cursor:pointer;font-size:13px;color:#1d2327;}
+	.ms365cal-color-trigger:hover{border-color:#2271b1;}
+	.ms365cal-color-bar{display:inline-block;width:26px;height:4px;border-radius:2px;flex:0 0 auto;}
+	.ms365cal-color-menu{display:none;position:absolute;top:100%;left:0;z-index:20;margin-top:2px;min-width:130px;max-height:260px;overflow-y:auto;background:#fff;border:1px solid #8c8f94;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.15);}
+	.ms365cal-color-menu.is-open{display:block;}
+	.ms365cal-color-option{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border:0;background:none;cursor:pointer;font-size:13px;color:#1d2327;text-align:left;}
+	.ms365cal-color-option:hover,.ms365cal-color-option:focus{background:#f0f0f1;outline:none;}
 	</style>
 	<div class="wrap">
 		<h1>MS365 Merged Calendar</h1>
@@ -2748,11 +2733,20 @@ function ms365cal_settings_page() {
 							</td>
 							<td><input type="text" name="cal[<?php echo (int) $i; ?>][source]" class="regular-text" value="<?php echo esc_attr( $c['source'] ); ?>"></td>
 							<td>
-								<select name="cal[<?php echo (int) $i; ?>][color]" class="ms365cal-color-select">
-									<?php foreach ( $palette as $set ) : ?>
-										<option value="<?php echo esc_attr( $set['primary'] ); ?>" style="color:<?php echo esc_attr( $set['text'] ); ?>" <?php selected( 0 === strcasecmp( $checked_set['primary'], $set['primary'] ) ); ?>>&#9473;&#9473;&#9473;&#9473;&#9473; <?php echo esc_html( $set['name'] ); ?></option>
-									<?php endforeach; ?>
-								</select>
+								<div class="ms365cal-color-picker">
+									<input type="hidden" name="cal[<?php echo (int) $i; ?>][color]" value="<?php echo esc_attr( $checked_set['primary'] ); ?>" class="ms365cal-color-value">
+									<button type="button" class="ms365cal-color-trigger" aria-haspopup="listbox" aria-expanded="false">
+										<span class="ms365cal-color-bar" style="background:<?php echo esc_attr( $checked_set['primary'] ); ?>"></span>
+										<span class="ms365cal-color-label"><?php echo esc_html( $checked_set['name'] ); ?></span>
+									</button>
+									<div class="ms365cal-color-menu" role="listbox" hidden>
+										<?php foreach ( $palette as $set ) : ?>
+											<button type="button" class="ms365cal-color-option" role="option" data-value="<?php echo esc_attr( $set['primary'] ); ?>" data-name="<?php echo esc_attr( $set['name'] ); ?>">
+												<span class="ms365cal-color-bar" style="background:<?php echo esc_attr( $set['primary'] ); ?>"></span><?php echo esc_html( $set['name'] ); ?>
+											</button>
+										<?php endforeach; ?>
+									</div>
+								</div>
 							</td>
 							<td style="text-align:center"><input type="checkbox" name="cal[<?php echo (int) $i; ?>][default]" <?php checked( ! empty( $c['default'] ) ); ?>></td>
 							<td><button type="button" class="button ms365cal-del">Remove</button></td>
@@ -2863,6 +2857,9 @@ function ms365cal_settings_page() {
 			var tr=body.querySelector('tr').cloneNode(true);
 			tr.querySelectorAll('input,select').forEach(function(el){
 				el.name=el.name.replace(/cal\[\d+\]/,'cal['+idx+']');
+				if(el.classList.contains('ms365cal-color-value')){
+					return; // handled below, from the cloned menu's own first option
+				}
 				if(el.type==='checkbox'){
 					el.checked=false;
 				}else if(el.tagName==='SELECT'){
@@ -2871,12 +2868,57 @@ function ms365cal_settings_page() {
 					el.value='';
 				}
 			});
+			var firstOption=tr.querySelector('.ms365cal-color-option');
+			if(firstOption)setColorPicker(tr.querySelector('.ms365cal-color-picker'),firstOption.dataset.value,firstOption.dataset.name);
 			body.appendChild(tr);idx++;
 		});
 		body.addEventListener('click',function(e){
 			if(e.target.classList.contains('ms365cal-del')){
 				if(body.querySelectorAll('tr').length>1)e.target.closest('tr').remove();
 			}
+		});
+
+		// Custom colour picker: a button that always shows the current colour
+		// (bar + name) and toggles a small popup list of the same, instead of a
+		// native <select> — a native select's closed state doesn't reliably
+		// reflect a styled <option> across browsers, and <option> can't hold
+		// more than plain coloured text (no room for a proper colour bar).
+		function setColorPicker(picker,value,name){
+			if(!picker)return;
+			picker.querySelector('.ms365cal-color-value').value=value;
+			picker.querySelector('.ms365cal-color-bar').style.background=value;
+			picker.querySelector('.ms365cal-color-label').textContent=name;
+		}
+		function closeAllMenus(){
+			document.querySelectorAll('.ms365cal-color-menu.is-open').forEach(function(m){
+				m.hidden=true;m.classList.remove('is-open');
+				var t=m.previousElementSibling;
+				if(t)t.setAttribute('aria-expanded','false');
+			});
+		}
+		body.addEventListener('click',function(e){
+			var trigger=e.target.closest('.ms365cal-color-trigger');
+			if(trigger){
+				var menu=trigger.nextElementSibling;
+				var wasOpen=menu.classList.contains('is-open');
+				closeAllMenus();
+				if(!wasOpen){
+					menu.hidden=false;menu.classList.add('is-open');
+					trigger.setAttribute('aria-expanded','true');
+				}
+				return;
+			}
+			var option=e.target.closest('.ms365cal-color-option');
+			if(option){
+				setColorPicker(option.closest('.ms365cal-color-picker'),option.dataset.value,option.dataset.name);
+				closeAllMenus();
+			}
+		});
+		document.addEventListener('click',function(e){
+			if(!e.target.closest('.ms365cal-color-picker'))closeAllMenus();
+		});
+		document.addEventListener('keydown',function(e){
+			if(e.key==='Escape')closeAllMenus();
 		});
 	})();
 	(function(){
