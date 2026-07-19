@@ -111,10 +111,20 @@ filter `ms365cal_client_ip` if behind a trusted proxy).
   block below the row — so the whole row (times column and rail included, via
   `.ms365cal-head`'s `align-items:stretch`) grows downward together; the times stay
   visible throughout, so the detail doesn't repeat them. Detail shows: the **full event
-  body** (Graph `body` in plain text via `Prefer: outlook.body-content-type="text"`; for
-  online meetings, `ms365cal_strip_meeting_boilerplate()` removes the auto-inserted
-  Teams join/dial-in block — everything between the long underscore-rule lines — since
-  the join link and location cover that separately), join link, and optional Outlook
+  body** — fetched as HTML (`Prefer: outlook.body-content-type="html"`, not plain text)
+  so real links keep their original anchor text instead of showing as a bare URL,
+  then run through `ms365cal_dedupe_repeated_links()` (collapses an immediately-repeated
+  link — a Graph quirk, e.g. an Outlook "Smart Link" preview card duplicating its own
+  href) and, for online meetings, `ms365cal_strip_meeting_boilerplate()` (removes the
+  auto-inserted Teams join/dial-in block, everything between the long underscore-rule
+  lines, since the join link and location cover that separately) — and finally
+  `ms365cal_sanitize_event_html()`, which is the actual trust boundary: `wp_kses()` with
+  a narrow allowlist (`a[href]`, `p`, `br`, `div`, `span`, `b`, `strong`, `i`, `em`, `u`,
+  `ul`, `ol`, `li` — no style/class/id/data-\*, no images, no scripts) since bodies can be
+  set by external meeting organisers, followed by forcing every surviving link to
+  `target="_blank" rel="noopener noreferrer"`. The front end injects the result as
+  markup (`e.body`, not `esc(e.body)`) — client-side trust is contingent on that
+  server-side sanitisation always running first. Also: join link, and optional Outlook
   link. (Location itself lives on the meta line, not the detail — moved there so it's
   visible without expanding.)
 
@@ -366,3 +376,17 @@ exists on a site once it's running 2.0.4+.
     requests). Only merges exact duplicates separated by nothing but whitespace, so
     intentionally repeated links elsewhere in a body are untouched. Applied to every
     event body, not just online meetings.
+35. **Body switched from plain text to sanitised HTML** (2.3.0), so a link keeps its
+    real anchor text (e.g. "veckans meny") instead of rendering as a bare URL — plain
+    text discarded that structure entirely, since Graph's plain-text conversion has no
+    way to mark "these words were the link". `ms365cal_dedupe_repeated_links()` was
+    extended to also collapse two adjacent `<a>` tags sharing an href (the HTML shape of
+    the same Smart-Link-duplication quirk; the old bare-URL pattern is kept as a
+    secondary pass). New `ms365cal_sanitize_event_html()` is the trust boundary —
+    `wp_kses()` with a narrow allowlist, run *after* the dedupe/boilerplate passes so
+    any stray tag imbalance from that regex-based surgery gets normalised by wp_kses's
+    tokenizer. The front end now injects `e.body` as markup instead of escaping it
+    (`esc()` is unchanged for every other field — title, location, chip labels, etc. are
+    still escaped exactly as before). `.ms365cal-desc` dropped `white-space:pre-wrap`
+    (real HTML has its own block structure now) and `.ms365cal-detail`'s child-spacing
+    rule was extended to also cover `<p>`, since Graph's HTML may use either tag.

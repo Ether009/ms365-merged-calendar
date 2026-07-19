@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.2.5
+ * Version:           2.3.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -418,19 +418,89 @@ function ms365cal_strip_meeting_boilerplate( $text ) {
 }
 
 /**
- * Collapse an immediately-repeated link in a plain-text event body down to one
- * occurrence. Graph's HTML-to-plain-text conversion can duplicate a URL back to
- * back — e.g. a link embedded as an Outlook "Smart Link" preview card renders once
- * for the visible link and once more for the card reference, invisible in Outlook's
- * own HTML view but present in the plain-text body this plugin requests. Only
- * merges when the *exact same* link repeats with nothing but whitespace between —
- * intentionally repeated links elsewhere in the body are left alone.
+ * Collapse an immediately-repeated link in an event body down to one occurrence.
+ * Graph's HTML-to-plain-text conversion (and, it turns out, the HTML body itself)
+ * can duplicate a link back to back — e.g. a link embedded as an Outlook "Smart
+ * Link" preview card renders once for the visible link and once more for the card
+ * reference, invisible in Outlook's own rendered view. In HTML this shows up as two
+ * adjacent <a> tags sharing the same href; kept as a secondary pass is the older
+ * plain-text shape (the same bare URL twice in a row) in case a body ever arrives
+ * that way. Only merges when the *exact same* link repeats with nothing but
+ * whitespace (or a stray <br>) between — intentionally repeated links elsewhere in
+ * the body are left alone. Runs before sanitisation, on Graph's raw markup.
  */
 function ms365cal_dedupe_repeated_links( $text ) {
-	if ( '' === $text || false === strpos( $text, 'http' ) ) {
+	if ( '' === $text || false === stripos( $text, 'http' ) ) {
 		return $text;
 	}
-	return preg_replace( '/(<?https?:\/\/[^\s<>]+>?)(\s+\1)+/', '$1', $text );
+
+	$anchor_pattern = '/(<a\s[^>]*href="([^"]+)"[^>]*>.*?<\/a>)(?:\s|&nbsp;|<br\s*\/?>)*<a\s[^>]*href="\2"[^>]*>.*?<\/a>/is';
+	$prev           = null;
+	while ( $prev !== $text ) {
+		$prev   = $text;
+		$merged = preg_replace( $anchor_pattern, '$1', $text );
+		if ( null !== $merged ) {
+			$text = $merged;
+		}
+	}
+
+	$plain = preg_replace( '/(<?https?:\/\/[^\s<>]+>?)(\s+\1)+/', '$1', $text );
+	return null !== $plain ? $plain : $text;
+}
+
+/**
+ * Sanitise event-body HTML from Graph before it reaches the browser as real markup
+ * (rather than escaped plain text), so a link keeps its original anchor text instead
+ * of showing as a bare URL. Event bodies can be set by external meeting organisers,
+ * so this goes through wp_kses() with a conservative allowlist — basic text
+ * structure and links only; no style/class/id/data-* attributes, images, or
+ * scripts — the same trusted sanitiser WordPress uses for post content, just
+ * narrower. Every surviving link is then forced to open safely in a new tab
+ * (target="_blank" rel="noopener noreferrer"), overriding whatever — if anything —
+ * Graph's source HTML set, since these links point wherever the organiser put them.
+ */
+function ms365cal_sanitize_event_html( $html ) {
+	if ( '' === $html ) {
+		return '';
+	}
+
+	$allowed = array(
+		'a'      => array( 'href' => true ),
+		'p'      => array(),
+		'br'     => array(),
+		'div'    => array(),
+		'span'   => array(),
+		'b'      => array(),
+		'strong' => array(),
+		'i'      => array(),
+		'em'     => array(),
+		'u'      => array(),
+		'ul'     => array(),
+		'ol'     => array(),
+		'li'     => array(),
+	);
+
+	$clean = wp_kses( $html, $allowed );
+
+	// The allowlist above only ever lets 'href' through, so every surviving <a> is
+	// exactly "<a href=...>" at this point — safe to target unconditionally.
+	$with_target = preg_replace( '/<a\s+href=/i', '<a target="_blank" rel="noopener noreferrer" href=', $clean );
+	if ( null !== $with_target ) {
+		$clean = $with_target;
+	}
+
+	// Outlook's editor tends to leave runs of empty paragraphs/line breaks; collapse
+	// them so the description doesn't end up mostly whitespace.
+	$collapsed = preg_replace(
+		array( '/(?:<div>(?:&nbsp;|\s)*<\/div>\s*){2,}/i', '/(?:<br\s*\/?>\s*){3,}/i' ),
+		array( '', '<br><br>' ),
+		$clean
+	);
+	if ( null !== $collapsed ) {
+		$clean = $collapsed;
+	}
+
+	return trim( $clean );
 }
 
 /**
@@ -466,7 +536,7 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 		'timeout' => 20,
 		'headers' => array(
 			'Authorization' => 'Bearer ' . $token,
-			'Prefer'        => 'outlook.timezone="' . $tz . '", outlook.body-content-type="text"',
+			'Prefer'        => 'outlook.timezone="' . $tz . '", outlook.body-content-type="html"',
 		),
 	);
 
@@ -635,6 +705,7 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 						// noise — strip it, keeping any real notes the organiser wrote.
 						$body = ms365cal_strip_meeting_boilerplate( $body );
 					}
+					$body = ms365cal_sanitize_event_html( $body );
 				}
 
 				$row = array(
@@ -1366,9 +1437,9 @@ function ms365cal_assets() {
 	.ms365cal-loc-line{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 	.ms365cal-recur-line{flex:0 0 auto;margin-left:auto;white-space:nowrap;}
 	.ms365cal-detail{margin:6px 0 4px;font-size:13px;line-height:1.6;}
-	.ms365cal-detail div{margin:5px 0;}
-	.ms365cal-detail div:first-child{margin-top:0;}
-	.ms365cal-desc{white-space:pre-wrap;opacity:.9;}
+	.ms365cal-detail div,.ms365cal-detail p{margin:5px 0;}
+	.ms365cal-detail div:first-child,.ms365cal-detail p:first-child{margin-top:0;}
+	.ms365cal-desc{opacity:.9;}
 	.ms365cal-detail a{color:#185fa5;font-weight:600;text-decoration:underline;text-underline-offset:2px;}
 	</style>
 	<script>
@@ -1458,8 +1529,10 @@ function ms365cal_assets() {
 				// column (which stretches with the row) while expanded, so repeating
 				// them in the body would be redundant. No location either \u2014 it's on
 				// the always-visible meta line above.
+				// e.body is server-sanitised HTML (wp_kses, see ms365cal_sanitize_event_html())
+				// — injected as markup, not escaped, so real links keep their anchor text.
 				var d='';
-				if(e.body)d+='<div class="ms365cal-desc">'+esc(e.body)+'</div>';
+				if(e.body)d+='<div class="ms365cal-desc">'+e.body+'</div>';
 				if(e.joinUrl)d+='<div><a href="'+esc(e.joinUrl)+'" target="_blank" rel="noopener">Anslut till onlinem\u00f6te</a></div>';
 				else if(e.online)d+='<div>Onlinem\u00f6te</div>';
 				if(cfg.showOutlook&&e.link)d+='<div><a href="'+esc(e.link)+'" target="_blank" rel="noopener">\u00d6ppna i Outlook \u2197</a></div>';
