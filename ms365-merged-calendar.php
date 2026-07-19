@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.4.2
+ * Version:           2.5.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -18,7 +18,7 @@ define( 'MS365CAL_MAX_WINDOW', 62 ); // hard cap on days per request
 define( 'MS365CAL_RATE_MAX', 30 );   // max REST requests per IP per window (0 = disabled)
 define( 'MS365CAL_RATE_WINDOW', 60 ); // rate-limit window, seconds
 define( 'MS365CAL_BACKOFF_MAX', 300 ); // max seconds to pause Graph calls after a 429/503
-define( 'MS365CAL_MAX_PAGES', 20 );    // safety cap on Graph nextLink pages per calendar (×100 events)
+define( 'MS365CAL_MAX_PAGES', 20 );    // safety cap on Graph nextLink pages per calendar (× the configured page size)
 define( 'MS365CAL_MAX_MASTERS', 200 ); // recurrence series masters resolved per request (via $batch, 20/call)
 
 /**
@@ -109,17 +109,19 @@ function ms365cal_normalize_repo_url( $repo ) {
  */
 function ms365cal_get_settings() {
 	$defaults = array(
-		'tenant_id'     => '',
-		'client_id'     => '',
-		'client_secret' => '',
-		'cache_minutes' => 20,
-		'timezone'      => wp_timezone_string(),
-		'rate_max'      => MS365CAL_RATE_MAX,
-		'rate_window'   => MS365CAL_RATE_WINDOW,
-		'show_outlook'  => false,
-		'deploy_key'    => '',
-		'update_repo'   => '',
-		'calendars'     => array(),
+		'tenant_id'       => '',
+		'client_id'       => '',
+		'client_secret'   => '',
+		'cache_minutes'   => 20,
+		'timezone'        => wp_timezone_string(),
+		'rate_max'        => MS365CAL_RATE_MAX,
+		'rate_window'     => MS365CAL_RATE_WINDOW,
+		'show_outlook'    => false,
+		'show_recurrence' => true,
+		'events_top'      => 100,
+		'deploy_key'      => '',
+		'update_repo'     => '',
+		'calendars'       => array(),
 	);
 	$saved    = get_option( MS365CAL_OPTION, array() );
 	return wp_parse_args( is_array( $saved ) ? $saved : array(), $defaults );
@@ -184,8 +186,12 @@ function ms365cal_get_token() {
 
 /**
  * Build the calendarView URL. This is the only place group vs. mailbox differs.
+ * $top is the configurable page size (settings['events_top']) — a calendar's page
+ * only carries @odata.nextLink (triggering a pagination/straggler fallback) once its
+ * event count in the window exceeds this value, so raising it above the busiest
+ * calendar's normal event count lets most fetches skip pagination entirely.
  */
-function ms365cal_view_url( $cal, $start_iso, $end_iso ) {
+function ms365cal_view_url( $cal, $start_iso, $end_iso, $top ) {
 	$source = rawurlencode( $cal['source'] );
 	$base   = ( 'mailbox' === $cal['type'] )
 		? "https://graph.microsoft.com/v1.0/users/{$source}/calendarView"
@@ -196,7 +202,7 @@ function ms365cal_view_url( $cal, $start_iso, $end_iso ) {
 			'startDateTime' => $start_iso,
 			'endDateTime'   => $end_iso,
 			'$orderby'      => 'start/dateTime',
-			'$top'          => 100,
+			'$top'          => (int) $top,
 			'$select'       => 'subject,start,end,location,isAllDay,onlineMeeting,webLink,type,seriesMasterId,body',
 		),
 		$base
@@ -536,12 +542,14 @@ function ms365cal_sanitize_event_html( $html ) {
  * fetch (ms365cal_fetch_calendars_batched()), so the event-shaping logic — time
  * labels, the left-column t1/t2, longSpan, body sanitisation, recurrence-master
  * collection — lives in exactly one place. $need_masters accumulates
- * seriesMasterId => true for any recurring occurrence found, by reference.
+ * seriesMasterId => true for any recurring occurrence found, by reference. When
+ * $show_recur is false, recurrence text/collection is skipped entirely (every row's
+ * 'recur' stays '') so the caller never issues the extra $batch calls to resolve it.
  *
  * @return array Row objects; a row with a series master still carries a temporary
  *               '_master' key for the caller to resolve and strip afterward.
  */
-function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $window_start, $today0, $window_end, &$need_masters ) {
+function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $window_start, $today0, $window_end, &$need_masters, $show_recur ) {
 	$out = array();
 
 	foreach ( $raw_events as $e ) {
@@ -617,15 +625,19 @@ function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $wi
 		// lives on the series master. Collect the master IDs now and resolve
 		// them together via $batch after paging (see below); until then, mark
 		// the row generic. Occurrences/exceptions with no master stay generic.
+		// Skipped entirely when $show_recur is off, so no master IDs are ever
+		// collected and the caller never makes the resolution $batch calls.
 		$recur     = '';
 		$master_id = isset( $e['seriesMasterId'] ) ? $e['seriesMasterId'] : '';
 		$etype     = isset( $e['type'] ) ? $e['type'] : '';
-		if ( '' !== $master_id ) {
-			$recur = 'Återkommande händelse';
+		if ( $show_recur ) {
+			if ( '' !== $master_id ) {
+				$recur = 'Återkommande händelse';
 
-			$need_masters[ $master_id ] = true;
-		} elseif ( in_array( $etype, array( 'occurrence', 'exception' ), true ) ) {
-			$recur = 'Återkommande händelse';
+				$need_masters[ $master_id ] = true;
+			} elseif ( in_array( $etype, array( 'occurrence', 'exception' ), true ) ) {
+				$recur = 'Återkommande händelse';
+			}
 		}
 
 		// A local $event_body — kept distinct from the caller's response-JSON
@@ -663,7 +675,7 @@ function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $wi
 			'joinUrl'  => isset( $e['onlineMeeting']['joinUrl'] ) ? $e['onlineMeeting']['joinUrl'] : '',
 			'link'     => isset( $e['webLink'] ) ? $e['webLink'] : '',
 		);
-		if ( '' !== $master_id ) {
+		if ( $show_recur && '' !== $master_id ) {
 			$row['_master'] = $master_id; // temp key, stripped after resolution.
 		}
 		$out[] = $row;
@@ -700,7 +712,7 @@ function ms365cal_http_get( $url, $args ) {
  *         Graph's Retry-After (seconds) when present. 'status' is the HTTP code
  *         (0 for a transport error) and 'error' a short reason, both for debug.
  */
-function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
+function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz, $top, $show_recur ) {
 	$args = array(
 		'timeout' => 20,
 		'headers' => array(
@@ -732,7 +744,7 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 
 	$out          = array();
 	$need_masters = array(); // seriesMasterId => true, resolved in one $batch pass after paging.
-	$url          = ms365cal_view_url( $cal, $start_iso, $end_iso );
+	$url          = ms365cal_view_url( $cal, $start_iso, $end_iso, $top );
 	$page         = 0;
 
 	while ( $url && $page < MS365CAL_MAX_PAGES ) {
@@ -780,7 +792,7 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 		$page_body = json_decode( wp_remote_retrieve_body( $resp ), true );
 
 		if ( ! empty( $page_body['value'] ) && is_array( $page_body['value'] ) ) {
-			$rows = ms365cal_build_rows_from_page( $cal, $page_body['value'], $zone, $time_fmt, $window_start, $today0, $window_end, $need_masters );
+			$rows = ms365cal_build_rows_from_page( $cal, $page_body['value'], $zone, $time_fmt, $window_start, $today0, $window_end, $need_masters, $show_recur );
 			$out  = array_merge( $out, $rows );
 		}
 
@@ -909,15 +921,17 @@ function ms365cal_fetch_recurrence_map_multi( $cals_by_slug, $refs, $token ) {
  * $batch endpoint (up to 20 sub-requests per call) instead of one sequential
  * request per calendar — the dominant cost on a cache miss (measured: ~5.4s for 10
  * calendars sequentially, vs. this bringing it down to close to a single Graph
- * round-trip). A calendar whose page has more than $top (100) events in the window
- * — has @odata.nextLink — is rare for a typical weekly window; when it happens,
- * that one calendar falls back to the existing sequential ms365cal_fetch_one(),
- * which resolves its own pagination and recurrence, so its rows are excluded from
- * the shared recurrence-consolidation pass below (they're already resolved).
+ * round-trip). A calendar whose page has more than $top (settings['events_top'],
+ * default 100) events in the window — has @odata.nextLink — is rare for a typical
+ * weekly window, especially once $top is raised past a calendar's normal event
+ * count; when it happens, that one calendar falls back to the existing sequential
+ * ms365cal_fetch_one(), which resolves its own pagination and recurrence, so its
+ * rows are excluded from the shared recurrence-consolidation pass below (they're
+ * already resolved).
  *
  * @return array{all:array,throttled:bool,retry_after:int}
  */
-function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso, $tz ) {
+function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso, $tz, $top, $show_recur ) {
 	try {
 		$zone = new DateTimeZone( $tz );
 	} catch ( Exception $e ) {
@@ -942,7 +956,7 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
 	$url_by_slug  = array();
 	foreach ( $wanted as $cal ) {
 		$cals_by_slug[ $cal['slug'] ] = $cal;
-		$url_by_slug[ $cal['slug'] ]  = ms365cal_view_url( $cal, $start_iso, $end_iso );
+		$url_by_slug[ $cal['slug'] ]  = ms365cal_view_url( $cal, $start_iso, $end_iso, $top );
 	}
 
 	$prefer       = 'outlook.timezone="' . $tz . '", outlook.body-content-type="html"';
@@ -1053,7 +1067,8 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
 					$window_start,
 					$today0,
 					$window_end,
-					$cal_need_masters
+					$cal_need_masters,
+					$show_recur
 				);
 				$events           = array_merge( $events, $rows );
 				foreach ( array_keys( $cal_need_masters ) as $mid ) {
@@ -1064,8 +1079,10 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
 	}
 
 	// Resolve recurrence for the batched calendars' collected series masters,
-	// together, in as few $batch calls as possible.
-	if ( ! empty( $need_masters ) ) {
+	// together, in as few $batch calls as possible. $need_masters is always empty
+	// when $show_recur is off (ms365cal_build_rows_from_page() never populates it),
+	// so this block — and its $batch calls — is a natural no-op in that case.
+	if ( $show_recur && ! empty( $need_masters ) ) {
 		$recur_map = ms365cal_fetch_recurrence_map_multi( $cals_by_slug, $need_masters, $token );
 		foreach ( $events as $idx => $row ) {
 			if ( isset( $row['_master'] ) ) {
@@ -1082,7 +1099,7 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
 	// transport/HTTP failure): fetch them the old way, one at a time. Their own
 	// recurrence is already resolved internally by ms365cal_fetch_one().
 	foreach ( array_unique( $stragglers ) as $slug ) {
-		$res = ms365cal_fetch_one( $cals_by_slug[ $slug ], $token, $start_iso, $end_iso, $tz );
+		$res = ms365cal_fetch_one( $cals_by_slug[ $slug ], $token, $start_iso, $end_iso, $tz, $top, $show_recur );
 		if ( ! empty( $res['throttled'] ) ) {
 			return array(
 				'all'         => array(),
@@ -1106,9 +1123,11 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
  * @return array|WP_Error
  */
 function ms365cal_events_window( $slugs, $start_date, $days ) {
-	$settings = ms365cal_get_settings();
-	$tz       = $settings['timezone'] ? $settings['timezone'] : 'UTC';
-	$days     = min( MS365CAL_MAX_WINDOW, max( 1, (int) $days ) );
+	$settings   = ms365cal_get_settings();
+	$tz         = $settings['timezone'] ? $settings['timezone'] : 'UTC';
+	$days       = min( MS365CAL_MAX_WINDOW, max( 1, (int) $days ) );
+	$top        = max( 10, min( 999, (int) $settings['events_top'] ) );
+	$show_recur = ! empty( $settings['show_recurrence'] );
 
 	$wanted = array_values(
 		array_filter(
@@ -1165,7 +1184,7 @@ function ms365cal_events_window( $slugs, $start_date, $days ) {
 		return $has_stale ? $cached['events'] : $token;
 	}
 
-	$res = ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso, $tz );
+	$res = ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso, $tz, $top, $show_recur );
 
 	if ( ! empty( $res['throttled'] ) ) {
 		$backoff = max( 1, min( (int) $res['retry_after'], MS365CAL_BACKOFF_MAX ) );
@@ -1249,9 +1268,11 @@ function ms365cal_flush_cache() {
  * the normal path swallows becomes visible. Returns array|WP_Error.
  */
 function ms365cal_diagnose( $slugs, $start_date, $days ) {
-	$settings = ms365cal_get_settings();
-	$tz       = $settings['timezone'] ? $settings['timezone'] : 'UTC';
-	$days     = min( MS365CAL_MAX_WINDOW, max( 1, (int) $days ) );
+	$settings   = ms365cal_get_settings();
+	$tz         = $settings['timezone'] ? $settings['timezone'] : 'UTC';
+	$days       = min( MS365CAL_MAX_WINDOW, max( 1, (int) $days ) );
+	$top        = max( 10, min( 999, (int) $settings['events_top'] ) );
+	$show_recur = ! empty( $settings['show_recurrence'] );
 
 	$wanted = array_values(
 		array_filter(
@@ -1306,7 +1327,7 @@ function ms365cal_diagnose( $slugs, $start_date, $days ) {
 	$out['token_audience'] = isset( $claims['aud'] ) ? $claims['aud'] : '';
 
 	foreach ( $wanted as $cal ) {
-		$res                = ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz );
+		$res                = ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz, $top, $show_recur );
 		$out['calendars'][] = array(
 			'slug'      => $cal['slug'],
 			'type'      => $cal['type'],
@@ -2080,11 +2101,13 @@ function ms365cal_settings_page() {
 		if ( '' !== $posted_secret ) {
 			$new['client_secret'] = $posted_secret;
 		}
-		$new['cache_minutes'] = max( 1, (int) ( $_POST['cache_minutes'] ?? 20 ) );
-		$new['timezone']      = sanitize_text_field( wp_unslash( $_POST['timezone'] ?? 'UTC' ) );
-		$new['rate_max']      = max( 0, (int) ( $_POST['rate_max'] ?? MS365CAL_RATE_MAX ) );
-		$new['rate_window']   = max( 1, (int) ( $_POST['rate_window'] ?? MS365CAL_RATE_WINDOW ) );
-		$new['show_outlook']  = ! empty( $_POST['show_outlook'] );
+		$new['cache_minutes']   = max( 1, (int) ( $_POST['cache_minutes'] ?? 20 ) );
+		$new['timezone']        = sanitize_text_field( wp_unslash( $_POST['timezone'] ?? 'UTC' ) );
+		$new['rate_max']        = max( 0, (int) ( $_POST['rate_max'] ?? MS365CAL_RATE_MAX ) );
+		$new['rate_window']     = max( 1, (int) ( $_POST['rate_window'] ?? MS365CAL_RATE_WINDOW ) );
+		$new['show_outlook']    = ! empty( $_POST['show_outlook'] );
+		$new['show_recurrence'] = ! empty( $_POST['show_recurrence'] );
+		$new['events_top']      = max( 10, min( 999, (int) ( $_POST['events_top'] ?? 100 ) ) );
 
 		// Deploy key: like the client secret, a blank submission keeps the stored value;
 		// the explicit "clear" checkbox is the only way to erase it (disable the endpoint).
@@ -2161,6 +2184,23 @@ function ms365cal_settings_page() {
 				<tr><th>Outlook link</th><td>
 					<label><input type="checkbox" name="show_outlook" <?php checked( ! empty( $s['show_outlook'] ) ); ?>> Show an &ldquo;Open in Outlook&rdquo; link in the expanded event details</label>
 					<p class="description">Off by default. When enabled, each expanded event includes a link to open it in Outlook on the web.</p>
+				</td></tr>
+				<tr><th>Recurrence pattern</th><td>
+					<label><input type="checkbox" name="show_recurrence" <?php checked( ! empty( $s['show_recurrence'] ) ); ?>> Show a recurrence pattern (e.g. &ldquo;Repeats weekly on Mon, Wed&rdquo;) for recurring events</label>
+					<p class="description">On by default. <strong>Showing this requires an extra Microsoft Graph
+					lookup per distinct recurring series</strong> to resolve the pattern, which can meaningfully
+					slow down a cold (uncached) load &mdash; on this plugin's own benchmarks it cost roughly as
+					much time as fetching the events themselves. Disabling it skips those lookups entirely (every
+					event just omits the pattern) for a faster cold load.</p>
+				</td></tr>
+				<tr><th>Events per page</th><td>
+					<input type="number" name="events_top" min="10" max="999" value="<?php echo esc_attr( $s['events_top'] ); ?>" style="width:6em">
+					<p class="description">Number of events requested per calendar per Graph API call
+					(<code>$top</code>). Default <code>100</code>. A calendar only needs a follow-up pagination
+					request when it has more events in the window than this value, so raising it comfortably
+					above your busiest calendar's normal event count for the window lets most fetches skip
+					pagination lookups entirely. Larger values mean a bigger response payload per request;
+					999 is the practical ceiling.</p>
 				</td></tr>
 				<tr><th>Deploy key</th><td>
 					<?php if ( $deploy_const ) : ?>
