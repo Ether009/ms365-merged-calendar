@@ -20,11 +20,15 @@ No database schema and no activation hooks: deactivation fully reverts.
 
 1. **Azure / Entra ID** — register an app, grant **Application** permissions
    `Calendars.Read` (shared mailboxes) and `Group.Read.All` (group calendars), grant
-   admin consent for the tenant, and add a client secret.
+   admin consent for the tenant, and add a client secret. Add `Place.Read.All` and
+   `User.Read.All` too if you want the Calendars tab's search-as-you-type source
+   picker to work (optional — see below).
 2. **WordPress** — under **Settings → MS365 Calendar**, enter the Tenant ID, Client
    ID, and secret (or, preferred, define `MS365CAL_TENANT_ID` / `MS365CAL_CLIENT_ID` /
    `MS365CAL_CLIENT_SECRET` in `wp-config.php`), then add calendars: a **group** uses
-   its object-ID GUID as the source, a **shared mailbox** uses its email address.
+   its object-ID GUID as the source, a **mailbox** (shared, personal, or room) uses
+   its email address — start typing in the Source field to search your tenant's
+   groups/rooms/mailboxes and click a match, or just paste the GUID/email directly.
 3. Use the **Run calendar diagnostic** link on the settings page to verify live Graph
    status per calendar if anything looks empty.
 

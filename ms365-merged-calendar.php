@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.14.1
+ * Version:           2.15.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1537,8 +1537,179 @@ function ms365cal_register_rest() {
 			'callback'            => 'ms365cal_rest_self_update',
 		)
 	);
+
+	// Admin-only: groups + rooms + mail-enabled users from the tenant, for the
+	// "type to search" source picker on the Calendars tab. See ms365cal_fetch_directory().
+	register_rest_route(
+		'ms365cal/v1',
+		'/directory',
+		array(
+			'methods'             => 'GET',
+			'permission_callback' => function () {
+				return current_user_can( 'manage_options' );
+			},
+			'args'                => array(
+				'refresh' => array( 'sanitize_callback' => 'absint' ),
+			),
+			'callback'            => 'ms365cal_rest_directory',
+		)
+	);
 }
 add_action( 'rest_api_init', 'ms365cal_register_rest' );
+
+/**
+ * Admin-only directory picker: lists Graph GET responses as a flat page of
+ * {value:[...], '@odata.nextLink':...}, following nextLink up to
+ * MS365CAL_MAX_PAGES pages (same safety cap used for calendarView pagination).
+ * Returns whatever was collected plus an error string if a page failed, rather
+ * than discarding partial results — the directory picker degrades gracefully
+ * (one section missing) instead of failing outright over one bad resource.
+ */
+function ms365cal_graph_collect( $url, $token ) {
+	$items = array();
+	$pages = 0;
+	while ( $url && $pages < MS365CAL_MAX_PAGES ) {
+		$resp = wp_remote_get(
+			$url,
+			array(
+				'timeout' => 20,
+				'headers' => array( 'Authorization' => 'Bearer ' . $token ),
+			)
+		);
+		if ( is_wp_error( $resp ) ) {
+			return array(
+				'items' => $items,
+				'error' => $resp->get_error_message(),
+			);
+		}
+		$code = (int) wp_remote_retrieve_response_code( $resp );
+		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
+		if ( 200 !== $code ) {
+			$msg = isset( $body['error']['message'] ) ? $body['error']['message'] : ( 'HTTP ' . $code );
+			return array(
+				'items' => $items,
+				'error' => $msg,
+			);
+		}
+		if ( ! empty( $body['value'] ) && is_array( $body['value'] ) ) {
+			$items = array_merge( $items, $body['value'] );
+		}
+		$url = isset( $body['@odata.nextLink'] ) ? $body['@odata.nextLink'] : '';
+		++$pages;
+	}
+	return array(
+		'items' => $items,
+		'error' => null,
+	);
+}
+
+/**
+ * Fetches the tenant's M365 groups, room mailboxes, and mail-enabled user
+ * accounts for the "type to search" source picker — a flat, filterable list
+ * instead of making the admin hand-type a GUID or email. Rooms and users are
+ * both stored as 'mailbox' sources (same as ms365cal_detect_calendar_type()
+ * would classify them from their address alone); 'kind' here is display-only,
+ * so the picker can group results.
+ *
+ * There is deliberately no attempt to distinguish "shared" mailboxes from
+ * regular user mailboxes — Graph's core /users endpoint has no reliable field
+ * for that (see CLAUDE.md), so every mail-enabled Member account is listed
+ * and the admin recognises the one they want by name.
+ *
+ * Cached for 15 minutes (directories don't change minute to minute); pass
+ * $force_refresh to bypass it. Best-effort: a failure on one resource (e.g.
+ * missing Place.Read.All) doesn't block the other two, it's just reported in
+ * 'errors'.
+ */
+function ms365cal_fetch_directory( $force_refresh = false ) {
+	$transient_key = 'ms365cal_directory';
+	if ( ! $force_refresh ) {
+		$cached = get_transient( $transient_key );
+		if ( false !== $cached ) {
+			return $cached;
+		}
+	}
+
+	$token = ms365cal_get_token();
+	if ( is_wp_error( $token ) ) {
+		return array(
+			'items'   => array(),
+			'errors'  => array( $token->get_error_message() ),
+			'fetched' => time(),
+		);
+	}
+
+	$group_filter = rawurlencode( "groupTypes/any(c:c eq 'Unified')" );
+	$resources    = array(
+		'group'   => "https://graph.microsoft.com/v1.0/groups?\$filter={$group_filter}&\$select=id,displayName&\$top=999",
+		'room'    => 'https://graph.microsoft.com/v1.0/places/microsoft.graph.room?$top=999',
+		'mailbox' => 'https://graph.microsoft.com/v1.0/users?$select=id,displayName,mail,userType&$top=999',
+	);
+
+	$items  = array();
+	$errors = array();
+
+	foreach ( $resources as $kind => $url ) {
+		$res = ms365cal_graph_collect( $url, $token );
+		if ( $res['error'] ) {
+			$errors[] = $kind . ': ' . $res['error'];
+		}
+		foreach ( $res['items'] as $row ) {
+			if ( 'group' === $kind ) {
+				if ( empty( $row['id'] ) ) {
+					continue;
+				}
+				$items[] = array(
+					'kind'   => 'group',
+					'source' => $row['id'],
+					'label'  => $row['displayName'] ?? $row['id'],
+				);
+			} elseif ( 'room' === $kind ) {
+				if ( empty( $row['emailAddress'] ) ) {
+					continue;
+				}
+				$items[] = array(
+					'kind'   => 'room',
+					'source' => $row['emailAddress'],
+					'label'  => $row['displayName'] ?? $row['emailAddress'],
+				);
+			} else {
+				// Every mail-enabled Member account, not just "shared" ones — see docblock above.
+				if ( empty( $row['mail'] ) || 'Member' !== ( $row['userType'] ?? '' ) ) {
+					continue;
+				}
+				$items[] = array(
+					'kind'   => 'mailbox',
+					'source' => $row['mail'],
+					'label'  => $row['displayName'] ?? $row['mail'],
+				);
+			}
+		}
+	}
+
+	usort(
+		$items,
+		function ( $a, $b ) {
+			return strcasecmp( $a['label'], $b['label'] );
+		}
+	);
+
+	$result = array(
+		'items'   => $items,
+		'errors'  => $errors,
+		'fetched' => time(),
+	);
+	set_transient( $transient_key, $result, 15 * MINUTE_IN_SECONDS );
+	return $result;
+}
+
+function ms365cal_rest_directory( WP_REST_Request $req ) {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		return new WP_REST_Response( array( 'error' => 'forbidden' ), 403 );
+	}
+	$data = ms365cal_fetch_directory( (bool) $req->get_param( 'refresh' ) );
+	return new WP_REST_Response( $data, 200 );
+}
 
 /**
  * Secret-authenticated self-update. Forces the update checker to re-check GitHub and,
@@ -2703,6 +2874,16 @@ function ms365cal_settings_page() {
 	.ms365cal-color-menu.is-open{display:block;}
 	.ms365cal-color-option{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:6px 10px;border:0;background:none;cursor:pointer;font-size:13px;color:#1d2327;text-align:left;}
 	.ms365cal-color-option:hover,.ms365cal-color-option:focus{background:#f0f0f1;outline:none;}
+	.ms365cal-src-picker{position:relative;}
+	.ms365cal-src-menu{display:none;position:absolute;top:100%;left:0;z-index:20;margin-top:2px;width:420px;max-width:90vw;max-height:320px;overflow-y:auto;background:#fff;border:1px solid #8c8f94;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.15);}
+	.ms365cal-src-menu.is-open{display:block;}
+	.ms365cal-src-section{padding:4px 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:#787c82;background:#f6f7f7;}
+	.ms365cal-src-option{display:block;width:100%;box-sizing:border-box;padding:6px 10px;border:0;background:none;cursor:pointer;font-size:13px;color:#1d2327;text-align:left;}
+	.ms365cal-src-option:hover,.ms365cal-src-option:focus{background:#f0f0f1;outline:none;}
+	.ms365cal-src-name{display:block;}
+	.ms365cal-src-addr{display:block;font-size:11.5px;color:#787c82;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	.ms365cal-src-empty,.ms365cal-src-hint{padding:8px 10px;font-size:12px;color:#787c82;}
+	.ms365cal-src-error{padding:8px 10px;font-size:12px;color:#b32d2e;}
 	</style>
 	<div class="wrap">
 		<h1>MS365 Merged Calendar</h1>
@@ -2716,9 +2897,12 @@ function ms365cal_settings_page() {
 			<?php wp_nonce_field( 'ms365cal_save', 'ms365cal_nonce' ); ?>
 
 			<div class="ms365cal-tab-panel" data-tab="calendars">
-				<p>For a <strong>group</strong>, the source is the group's object ID (GUID).
-				For a <strong>shared mailbox</strong>, the source is its email address. Which one it
-				is gets detected from that format automatically — no need to say which.</p>
+				<p>Start typing in the <strong>Source</strong> field to search groups, rooms, and mailboxes
+				from your tenant — click a match to fill it in, or just type/paste a GUID or email
+				address directly if you already know it. For a <strong>group</strong> the source is its
+				object ID (GUID); for a <strong>mailbox</strong> (shared, personal, or room) it's an email
+				address. Which one it is gets detected from that format automatically on save — no need to
+				say which.</p>
 				<table class="widefat" id="ms365cal-rows">
 					<thead><tr>
 						<th>Label</th><th>Slug</th><th>Source (GUID or email)</th><th>Colour</th><th></th>
@@ -2743,7 +2927,12 @@ function ms365cal_settings_page() {
 						<tr>
 							<td><input type="text" name="cal[<?php echo (int) $i; ?>][label]" value="<?php echo esc_attr( $c['label'] ); ?>"></td>
 							<td><input type="text" name="cal[<?php echo (int) $i; ?>][slug]" value="<?php echo esc_attr( $c['slug'] ); ?>"></td>
-							<td><input type="text" name="cal[<?php echo (int) $i; ?>][source]" class="regular-text" value="<?php echo esc_attr( $c['source'] ); ?>"></td>
+							<td>
+								<div class="ms365cal-src-picker">
+									<input type="text" name="cal[<?php echo (int) $i; ?>][source]" class="regular-text ms365cal-src-input" autocomplete="off" value="<?php echo esc_attr( $c['source'] ); ?>" placeholder="Type to search, or paste a GUID/email">
+									<div class="ms365cal-src-menu" role="listbox" hidden></div>
+								</div>
+							</td>
 							<td>
 								<div class="ms365cal-color-picker">
 									<input type="hidden" name="cal[<?php echo (int) $i; ?>][color]" value="<?php echo esc_attr( $checked_set['primary'] ); ?>" class="ms365cal-color-value">
@@ -2868,6 +3057,8 @@ function ms365cal_settings_page() {
 	(function(){
 		var body=document.querySelector('#ms365cal-rows tbody');
 		var idx=body.querySelectorAll('tr').length;
+		var directoryUrl=<?php echo wp_json_encode( esc_url_raw( rest_url( 'ms365cal/v1/directory' ) ) ); ?>;
+		var directoryNonce=<?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
 		document.getElementById('ms365cal-add').addEventListener('click',function(){
 			var tr=body.querySelector('tr').cloneNode(true);
 			tr.querySelectorAll('input,select').forEach(function(el){
@@ -2934,6 +3125,128 @@ function ms365cal_settings_page() {
 		});
 		document.addEventListener('keydown',function(e){
 			if(e.key==='Escape')closeAllMenus();
+		});
+
+		// Source picker: the Source field itself is the filter — typing narrows a
+		// dropdown of groups/rooms/mailboxes fetched from Graph, but nothing stops
+		// the admin from just typing/pasting a GUID or email directly, same as
+		// before this existed (the field's value is what gets submitted either way).
+		var directoryItems=null,directoryPromise=null,directoryErrors=[];
+		var KIND_LABEL={group:'Group',room:'Room',mailbox:'Mailbox'};
+		var KIND_ORDER=['group','room','mailbox'];
+		function loadDirectory(force){
+			if(directoryPromise&&!force)return directoryPromise;
+			directoryPromise=fetch(directoryUrl+(force?'?refresh=1':''),{headers:{'X-WP-Nonce':directoryNonce}})
+				.then(function(r){return r.json();})
+				.then(function(data){
+					directoryItems=data.items||[];
+					directoryErrors=data.errors||[];
+					return directoryItems;
+				})
+				.catch(function(){
+					directoryItems=[];
+					directoryErrors=['Request failed.'];
+					return directoryItems;
+				});
+			return directoryPromise;
+		}
+		function renderSrcMenu(menu,query){
+			menu.innerHTML='';
+			if(directoryItems===null){
+				var loading=document.createElement('div');
+				loading.className='ms365cal-src-hint';
+				loading.textContent='Loading directory…';
+				menu.appendChild(loading);
+				return;
+			}
+			if(directoryErrors.length){
+				var err=document.createElement('div');
+				err.className='ms365cal-src-error';
+				err.textContent="Couldn't load some of the directory: "+directoryErrors.join('; ');
+				menu.appendChild(err);
+			}
+			var q=(query||'').trim().toLowerCase();
+			var matches=directoryItems.filter(function(it){
+				return !q||it.label.toLowerCase().indexOf(q)!==-1||it.source.toLowerCase().indexOf(q)!==-1;
+			});
+			if(!matches.length){
+				var empty=document.createElement('div');
+				empty.className='ms365cal-src-empty';
+				empty.textContent=directoryItems.length?'No matches — you can still enter a GUID or email manually.':'Directory unavailable — enter a GUID or email manually.';
+				menu.appendChild(empty);
+				return;
+			}
+			var LIMIT=40,shown=0;
+			KIND_ORDER.forEach(function(kind){
+				if(shown>=LIMIT)return;
+				var group=matches.filter(function(it){return it.kind===kind;});
+				if(!group.length)return;
+				var header=document.createElement('div');
+				header.className='ms365cal-src-section';
+				header.textContent=KIND_LABEL[kind];
+				menu.appendChild(header);
+				group.slice(0,LIMIT-shown).forEach(function(it){
+					var btn=document.createElement('button');
+					btn.type='button';
+					btn.className='ms365cal-src-option';
+					btn.dataset.source=it.source;
+					btn.dataset.label=it.label;
+					var name=document.createElement('span');
+					name.className='ms365cal-src-name';
+					name.textContent=it.label;
+					var addr=document.createElement('span');
+					addr.className='ms365cal-src-addr';
+					addr.textContent=it.source;
+					btn.appendChild(name);
+					btn.appendChild(addr);
+					menu.appendChild(btn);
+					shown++;
+				});
+			});
+			if(shown<matches.length){
+				var hint=document.createElement('div');
+				hint.className='ms365cal-src-hint';
+				hint.textContent='Showing first '+shown+' of '+matches.length+' — keep typing to narrow.';
+				menu.appendChild(hint);
+			}
+		}
+		function closeAllSrcMenus(){
+			document.querySelectorAll('.ms365cal-src-menu.is-open').forEach(function(m){
+				m.hidden=true;m.classList.remove('is-open');
+			});
+		}
+		body.addEventListener('focusin',function(e){
+			var input=e.target.closest('.ms365cal-src-input');
+			if(!input)return;
+			var menu=input.closest('.ms365cal-src-picker').querySelector('.ms365cal-src-menu');
+			closeAllSrcMenus();
+			menu.hidden=false;menu.classList.add('is-open');
+			renderSrcMenu(menu,input.value);
+			loadDirectory(false).then(function(){
+				if(document.activeElement===input)renderSrcMenu(menu,input.value);
+			});
+		});
+		body.addEventListener('input',function(e){
+			var input=e.target.closest('.ms365cal-src-input');
+			if(!input)return;
+			var menu=input.closest('.ms365cal-src-picker').querySelector('.ms365cal-src-menu');
+			menu.hidden=false;menu.classList.add('is-open');
+			renderSrcMenu(menu,input.value);
+		});
+		body.addEventListener('click',function(e){
+			var option=e.target.closest('.ms365cal-src-option');
+			if(!option)return;
+			var picker=option.closest('.ms365cal-src-picker');
+			picker.querySelector('.ms365cal-src-input').value=option.dataset.source;
+			var labelInput=picker.closest('tr').querySelector('input[name$="[label]"]');
+			if(labelInput&&!labelInput.value)labelInput.value=option.dataset.label;
+			closeAllSrcMenus();
+		});
+		document.addEventListener('click',function(e){
+			if(!e.target.closest('.ms365cal-src-picker'))closeAllSrcMenus();
+		});
+		document.addEventListener('keydown',function(e){
+			if(e.key==='Escape')closeAllSrcMenus();
 		});
 	})();
 	(function(){
