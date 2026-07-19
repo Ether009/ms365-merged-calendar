@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.9.0
+ * Version:           2.10.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1922,24 +1922,201 @@ function ms365cal_rest_event_body( WP_REST_Request $req ) {
 
 /**
  * ---------------------------------------------------------------------------
- *  Colour helper
+ *  Colour palette
  * ---------------------------------------------------------------------------
+ *  25 preset colour sets, replacing free-text hex entry. Each set is a
+ *  {primary, text, supplement} triple generated from evenly-spaced hues (18
+ *  spaced 20° apart, plus 7 muted/dark variants for extra separation beyond
+ *  hue rotation alone — verified pairwise for perceptual distinctness) so
+ *  they stay visually distinct even at 25 entries:
+ *    - primary:    the rail / picker-dot colour (bold, saturated).
+ *    - text:       for text sitting on that set's own supplement pill —
+ *                  chosen per set for contrast, not hardcoded black.
+ *    - supplement: the pill background (calendar-picker chip, and the
+ *                  category-label pill in the event list).
  */
-function ms365cal_rgba( $hex, $alpha ) {
-	$hex = ltrim( $hex, '#' );
+function ms365cal_color_palette() {
+	return array(
+		array(
+			'primary'    => '#CE2727',
+			'text'       => '#610F0F',
+			'supplement' => '#F0DBDB',
+		),
+		array(
+			'primary'    => '#CE5F27',
+			'text'       => '#612A0F',
+			'supplement' => '#F0E2DB',
+		),
+		array(
+			'primary'    => '#CE9627',
+			'text'       => '#61460F',
+			'supplement' => '#F0E9DB',
+		),
+		array(
+			'primary'    => '#BFBF18',
+			'text'       => '#67670A',
+			'supplement' => '#F3F3D8',
+		),
+		array(
+			'primary'    => '#87BF18',
+			'text'       => '#48670A',
+			'supplement' => '#EAF3D8',
+		),
+		array(
+			'primary'    => '#4FBF18',
+			'text'       => '#29670A',
+			'supplement' => '#E1F3D8',
+		),
+		array(
+			'primary'    => '#27CE27',
+			'text'       => '#0F610F',
+			'supplement' => '#DBF0DB',
+		),
+		array(
+			'primary'    => '#27CE5F',
+			'text'       => '#0F612A',
+			'supplement' => '#DBF0E2',
+		),
+		array(
+			'primary'    => '#27CE96',
+			'text'       => '#0F6146',
+			'supplement' => '#DBF0E9',
+		),
+		array(
+			'primary'    => '#27CECE',
+			'text'       => '#0F6161',
+			'supplement' => '#DBF0F0',
+		),
+		array(
+			'primary'    => '#2796CE',
+			'text'       => '#0F4661',
+			'supplement' => '#DBE9F0',
+		),
+		array(
+			'primary'    => '#275FCE',
+			'text'       => '#0F2A61',
+			'supplement' => '#DBE2F0',
+		),
+		array(
+			'primary'    => '#2727CE',
+			'text'       => '#0F0F61',
+			'supplement' => '#DBDBF0',
+		),
+		array(
+			'primary'    => '#5F27CE',
+			'text'       => '#2A0F61',
+			'supplement' => '#E2DBF0',
+		),
+		array(
+			'primary'    => '#9627CE',
+			'text'       => '#460F61',
+			'supplement' => '#E9DBF0',
+		),
+		array(
+			'primary'    => '#CE27CE',
+			'text'       => '#610F61',
+			'supplement' => '#F0DBF0',
+		),
+		array(
+			'primary'    => '#CE2796',
+			'text'       => '#610F46',
+			'supplement' => '#F0DBE9',
+		),
+		array(
+			'primary'    => '#CE275F',
+			'text'       => '#610F2A',
+			'supplement' => '#F0DBE2',
+		),
+		array(
+			'primary'    => '#315381',
+			'text'       => '#222C39',
+			'supplement' => '#E2E5E9',
+		),
+		array(
+			'primary'    => '#742911',
+			'text'       => '#472115',
+			'supplement' => '#F1E0DA',
+		),
+		array(
+			'primary'    => '#397326',
+			'text'       => '#273C20',
+			'supplement' => '#E3EBE0',
+		),
+		array(
+			'primary'    => '#A33362',
+			'text'       => '#3D1F2B',
+			'supplement' => '#EBE0E5',
+		),
+		array(
+			'primary'    => '#216353',
+			'text'       => '#203C35',
+			'supplement' => '#E0EBE8',
+		),
+		array(
+			'primary'    => '#4A328F',
+			'text'       => '#27213B',
+			'supplement' => '#E3E1EA',
+		),
+		array(
+			'primary'    => '#777022',
+			'text'       => '#3E3B1E',
+			'supplement' => '#ECEBDF',
+		),
+	);
+}
+
+/**
+ * Resolve a calendar's stored primary hex to its full {primary, text,
+ * supplement} set. Falls back to the closest palette entry by RGB distance
+ * for anything not an exact match (e.g. a colour saved before this palette
+ * existed) so legacy values still render with a sensible, readable pairing
+ * instead of breaking.
+ */
+function ms365cal_color_set( $hex ) {
+	$palette = ms365cal_color_palette();
+	foreach ( $palette as $set ) {
+		if ( 0 === strcasecmp( $set['primary'], (string) $hex ) ) {
+			return $set;
+		}
+	}
+	return ms365cal_nearest_color_set( $hex, $palette );
+}
+
+/**
+ * Nearest palette entry to an arbitrary hex colour by squared RGB distance —
+ * used both for legacy-colour front-end rendering (via ms365cal_color_set())
+ * and to pre-select a sensible swatch on the admin settings page for a
+ * calendar whose stored colour predates this palette.
+ */
+function ms365cal_nearest_color_set( $hex, $palette = null ) {
+	if ( null === $palette ) {
+		$palette = ms365cal_color_palette();
+	}
+	$hex = ltrim( strtoupper( (string) $hex ), '#' );
 	if ( 3 === strlen( $hex ) ) {
 		$hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
 	}
-	if ( 6 !== strlen( $hex ) ) {
-		$hex = '888888';
+	if ( 6 !== strlen( $hex ) || ! ctype_xdigit( $hex ) ) {
+		return $palette[0];
 	}
-	return sprintf(
-		'rgba(%d,%d,%d,%s)',
-		hexdec( substr( $hex, 0, 2 ) ),
-		hexdec( substr( $hex, 2, 2 ) ),
-		hexdec( substr( $hex, 4, 2 ) ),
-		$alpha
-	);
+	$r1 = hexdec( substr( $hex, 0, 2 ) );
+	$g1 = hexdec( substr( $hex, 2, 2 ) );
+	$b1 = hexdec( substr( $hex, 4, 2 ) );
+
+	$best   = $palette[0];
+	$best_d = PHP_INT_MAX;
+	foreach ( $palette as $set ) {
+		$p2 = ltrim( $set['primary'], '#' );
+		$r2 = hexdec( substr( $p2, 0, 2 ) );
+		$g2 = hexdec( substr( $p2, 2, 2 ) );
+		$b2 = hexdec( substr( $p2, 4, 2 ) );
+		$d  = ( $r1 - $r2 ) * ( $r1 - $r2 ) + ( $g1 - $g2 ) * ( $g1 - $g2 ) + ( $b1 - $b2 ) * ( $b1 - $b2 );
+		if ( $d < $best_d ) {
+			$best_d = $d;
+			$best   = $set;
+		}
+	}
+	return $best;
 }
 
 /**
@@ -1996,10 +2173,12 @@ function ms365cal_shortcode( $atts ) {
 	$meta     = array();
 	$defaults = array();
 	foreach ( $scoped as $c ) {
+		$set                    = ms365cal_color_set( $c['color'] );
 		$meta[ $c['slug'] ]     = array(
-			'label' => $c['label'],
-			'color' => $c['color'],
-			'bg'    => ms365cal_rgba( $c['color'], 0.12 ),
+			'label'      => $c['label'],
+			'primary'    => $set['primary'],
+			'text'       => $set['text'],
+			'supplement' => $set['supplement'],
 		);
 		$defaults[ $c['slug'] ] = ! isset( $c['default'] ) || $c['default'];
 	}
@@ -2060,9 +2239,9 @@ function ms365cal_assets() {
 	.ms365cal-act{font-size:12px;padding:5px 12px;margin-left:6px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.75;transition:background .15s,opacity .15s;}
 	.ms365cal-act:hover{background:var(--ms-soft);opacity:1;}
 	.ms365cal-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;}
-	.ms365cal-chip{display:inline-flex;align-items:center;gap:7px;font-size:13px;padding:6px 13px;border-radius:999px;cursor:pointer;border:1px solid var(--ms-line);background:transparent;color:inherit;opacity:.5;transition:opacity .15s,border-color .15s,background .15s;}
+	.ms365cal-chip{display:inline-flex;align-items:center;gap:7px;font-size:13px;padding:6px 13px;border-radius:999px;cursor:pointer;border:1px solid var(--ms-line);background:transparent;color:inherit;opacity:.5;transition:opacity .15s,border-color .15s,background .15s,color .15s;}
 	.ms365cal-chip:hover{opacity:.8;}
-	.ms365cal-chip.is-on{border-color:var(--cc);background:var(--cbg);opacity:1;}
+	.ms365cal-chip.is-on{border-color:var(--cc);background:var(--cbg);color:var(--ct);opacity:1;}
 	.ms365cal-dot{width:9px;height:9px;border-radius:50%;background:currentColor;opacity:.35;}
 	.ms365cal-chip.is-on .ms365cal-dot{background:var(--cc);opacity:1;}
 	.ms365cal-nav{display:flex;align-items:center;gap:14px;margin-bottom:6px;}
@@ -2089,7 +2268,7 @@ function ms365cal_assets() {
 	.ms365cal-times{flex:0 0 auto;width:82px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;text-align:right;padding:10px 0;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.25;}
 	.ms365cal-t1{font-weight:600;opacity:.85;}
 	.ms365cal-t2{opacity:.5;}
-	.ms365cal-cat{font-size:11px;font-weight:600;line-height:1.2;overflow-wrap:break-word;max-width:100%;padding:2px 0;}
+	.ms365cal-cat{display:inline-block;font-size:11px;font-weight:600;line-height:1.2;overflow-wrap:break-word;max-width:100%;padding:3px 8px;border-radius:999px;}
 	.ms365cal-rail{width:4px;border-radius:999px;flex:0 0 auto;margin:10px 0;}
 	.ms365cal-hbody{flex:1;min-width:0;padding:10px 0;display:flex;flex-direction:column;}
 	.ms365cal-ev,.ms365cal-ev-static{font-size:15px;font-weight:600;background:none;border:0;padding:0;margin:0;text-align:left;text-transform:none;color:inherit;font-family:inherit;display:flex;align-items:baseline;gap:9px;width:100%;line-height:1.35;}
@@ -2169,8 +2348,9 @@ function ms365cal_assets() {
 				var b=document.createElement('button');
 				b.type='button';
 				b.className='ms365cal-chip'+(on?' is-on':'');
-				b.style.setProperty('--cc',m.color);
-				b.style.setProperty('--cbg',m.bg);
+				b.style.setProperty('--cc',m.primary);
+				b.style.setProperty('--cbg',m.supplement);
+				b.style.setProperty('--ct',m.text);
 				b.innerHTML='<span class="ms365cal-dot"></span>'+esc(m.label);
 				b.addEventListener('click',function(){enabled[slug]=!enabled[slug];b.classList.toggle('is-on');paint();});
 				chipsEl.appendChild(b);
@@ -2221,10 +2401,10 @@ function ms365cal_assets() {
 					+'<div class="ms365cal-head">'
 						+'<div class="ms365cal-times">'
 							+'<span class="ms365cal-t1">'+esc(e.t1)+'</span>'
-							+'<span class="ms365cal-cat" style="color:'+m.color+'">'+esc(m.label)+'</span>'
+							+'<span class="ms365cal-cat" style="color:'+m.text+';background:'+m.supplement+'">'+esc(m.label)+'</span>'
 							+'<span class="ms365cal-t2">'+esc(e.t2)+'</span>'
 						+'</div>'
-						+'<div class="ms365cal-rail" style="background:'+m.color+'"></div>'
+						+'<div class="ms365cal-rail" style="background:'+m.primary+'"></div>'
 						+'<div class="ms365cal-hbody">'
 							+titleHtml
 							+(showDetail?'<div class="ms365cal-detail"'+lazyAttrs+' hidden>'+d+'</div>':'')
@@ -2497,9 +2677,9 @@ function ms365cal_settings_page() {
 			if ( '' === $slug || '' === $src ) {
 				continue;
 			}
-			$color = sanitize_hex_color( $row['color'] ?? '#378add' );
+			$color = sanitize_hex_color( $row['color'] ?? '' );
 			if ( ! $color ) {
-				$color = '#378add';
+				$color = ms365cal_color_palette()[0]['primary'];
 			}
 			$cals[] = array(
 				'slug'    => $slug,
@@ -2531,6 +2711,11 @@ function ms365cal_settings_page() {
 	.ms365cal-help:hover .ms365cal-tip,.ms365cal-help:focus .ms365cal-tip{display:block;}
 	.ms365cal-tab-panel{display:none;}
 	.ms365cal-tab-panel.is-active{display:block;}
+	.ms365cal-swatches{display:flex;flex-wrap:wrap;gap:5px;max-width:210px;}
+	.ms365cal-swatches input{position:absolute;opacity:0;width:1px;height:1px;}
+	.ms365cal-swatches label{display:inline-block;width:20px;height:20px;border-radius:50%;cursor:pointer;box-shadow:0 0 0 1px rgba(0,0,0,.15) inset;}
+	.ms365cal-swatches input:checked+label{box-shadow:0 0 0 2px #fff,0 0 0 4px #1d2327;}
+	.ms365cal-swatches input:focus-visible+label{outline:2px solid #2271b1;outline-offset:2px;}
 	</style>
 	<div class="wrap">
 		<h1>MS365 Merged Calendar</h1>
@@ -2552,17 +2737,23 @@ function ms365cal_settings_page() {
 					</tr></thead>
 					<tbody>
 					<?php
-					$rows = ! empty( $s['calendars'] ) ? $s['calendars'] : array(
+					$palette = ms365cal_color_palette();
+					$rows    = ! empty( $s['calendars'] ) ? $s['calendars'] : array(
 						array(
 							'slug'    => '',
 							'label'   => '',
-							'color'   => '#378add',
+							'color'   => $palette[0]['primary'],
 							'type'    => 'group',
 							'source'  => '',
 							'default' => true,
 						),
 					);
 					foreach ( $rows as $i => $c ) :
+						// The checked swatch: an exact palette match, or the closest one for a
+						// colour saved before this palette existed -- ensures a radio is always
+						// checked (an unchecked group submits nothing at all) and that legacy
+						// colours still land somewhere sensible on first view.
+						$checked_primary = ms365cal_color_set( $c['color'] )['primary'];
 						?>
 						<tr>
 							<td><input type="text" name="cal[<?php echo (int) $i; ?>][label]" value="<?php echo esc_attr( $c['label'] ); ?>"></td>
@@ -2574,7 +2765,15 @@ function ms365cal_settings_page() {
 								</select>
 							</td>
 							<td><input type="text" name="cal[<?php echo (int) $i; ?>][source]" class="regular-text" value="<?php echo esc_attr( $c['source'] ); ?>"></td>
-							<td><input type="text" name="cal[<?php echo (int) $i; ?>][color]" value="<?php echo esc_attr( $c['color'] ); ?>" size="8"></td>
+							<td>
+								<div class="ms365cal-swatches">
+									<?php foreach ( $palette as $k => $set ) : ?>
+										<?php $radio_id = 'ms365cal-color-' . (int) $i . '-' . (int) $k; ?>
+										<input type="radio" id="<?php echo esc_attr( $radio_id ); ?>" name="cal[<?php echo (int) $i; ?>][color]" value="<?php echo esc_attr( $set['primary'] ); ?>" <?php checked( 0 === strcasecmp( $checked_primary, $set['primary'] ) ); ?>>
+										<label for="<?php echo esc_attr( $radio_id ); ?>" style="background:<?php echo esc_attr( $set['primary'] ); ?>" title="<?php echo esc_attr( $set['primary'] ); ?>"></label>
+									<?php endforeach; ?>
+								</div>
+							</td>
 							<td style="text-align:center"><input type="checkbox" name="cal[<?php echo (int) $i; ?>][default]" <?php checked( ! empty( $c['default'] ) ); ?>></td>
 							<td><button type="button" class="button ms365cal-del">Remove</button></td>
 						</tr>
@@ -2684,8 +2883,23 @@ function ms365cal_settings_page() {
 			var tr=body.querySelector('tr').cloneNode(true);
 			tr.querySelectorAll('input,select').forEach(function(el){
 				el.name=el.name.replace(/cal\[\d+\]/,'cal['+idx+']');
-				if(el.type==='checkbox')el.checked=false;else if(el.tagName==='SELECT')el.selectedIndex=0;else el.value=(el.name.indexOf('color')>-1?'#378add':'');
+				if(el.type==='radio'){
+					var oldId=el.id;
+					var newId=oldId.replace(/^ms365cal-color-\d+-/,'ms365cal-color-'+idx+'-');
+					el.id=newId;
+					var lbl=tr.querySelector('label[for="'+oldId+'"]');
+					if(lbl)lbl.setAttribute('for',newId);
+					el.checked=false;
+				}else if(el.type==='checkbox'){
+					el.checked=false;
+				}else if(el.tagName==='SELECT'){
+					el.selectedIndex=0;
+				}else{
+					el.value='';
+				}
 			});
+			var firstRadio=tr.querySelector('.ms365cal-swatches input[type="radio"]');
+			if(firstRadio)firstRadio.checked=true;
 			body.appendChild(tr);idx++;
 		});
 		body.addEventListener('click',function(e){
