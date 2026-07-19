@@ -1055,7 +1055,7 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
 					$window_end,
 					$cal_need_masters
 				);
-				$events = array_merge( $events, $rows );
+				$events           = array_merge( $events, $rows );
 				foreach ( array_keys( $cal_need_masters ) as $mid ) {
 					$need_masters[] = array( $slug, $mid );
 				}
