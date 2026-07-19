@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.2.4
+ * Version:           2.2.5
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -418,6 +418,22 @@ function ms365cal_strip_meeting_boilerplate( $text ) {
 }
 
 /**
+ * Collapse an immediately-repeated link in a plain-text event body down to one
+ * occurrence. Graph's HTML-to-plain-text conversion can duplicate a URL back to
+ * back — e.g. a link embedded as an Outlook "Smart Link" preview card renders once
+ * for the visible link and once more for the card reference, invisible in Outlook's
+ * own HTML view but present in the plain-text body this plugin requests. Only
+ * merges when the *exact same* link repeats with nothing but whitespace between —
+ * intentionally repeated links elsewhere in the body are left alone.
+ */
+function ms365cal_dedupe_repeated_links( $text ) {
+	if ( '' === $text || false === strpos( $text, 'http' ) ) {
+		return $text;
+	}
+	return preg_replace( '/(<?https?:\/\/[^\s<>]+>?)(\s+\1)+/', '$1', $text );
+}
+
+/**
  * Single Graph GET with one short inline retry for a tiny Retry-After. Longer
  * throttles fall through to the caller's back-off handling.
  */
@@ -611,11 +627,14 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 
 				$is_online = ! empty( $e['onlineMeeting'] );
 				$body      = isset( $e['body']['content'] ) ? trim( (string) $e['body']['content'] ) : '';
-				if ( $is_online && '' !== $body ) {
-					// The join link and "Teams meeting" location are shown separately in
-					// the UI, so the auto-inserted join/dial-in block in the body is just
-					// noise — strip it, keeping any real notes the organiser wrote.
-					$body = ms365cal_strip_meeting_boilerplate( $body );
+				if ( '' !== $body ) {
+					$body = ms365cal_dedupe_repeated_links( $body );
+					if ( $is_online ) {
+						// The join link and "Teams meeting" location are shown separately in
+						// the UI, so the auto-inserted join/dial-in block in the body is just
+						// noise — strip it, keeping any real notes the organiser wrote.
+						$body = ms365cal_strip_meeting_boilerplate( $body );
+					}
 				}
 
 				$row = array(

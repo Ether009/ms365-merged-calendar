@@ -359,3 +359,10 @@ exists on a site once it's running 2.0.4+.
     present). `.ms365cal-recur-line` is now the inner right-aligned span within the new
     `.ms365cal-meta-line` wrapper, which took over the old bottom-pinning
     (`margin-top:auto`).
+34. `ms365cal_dedupe_repeated_links()` collapses an immediately-repeated identical link
+    in an event body down to one occurrence — a Graph plain-text-conversion quirk (seen
+    on "Lunch": a Canva link embedded as an Outlook "Smart Link" card rendered twice,
+    invisible in Outlook's own HTML view but present in the plain-text body this plugin
+    requests). Only merges exact duplicates separated by nothing but whitespace, so
+    intentionally repeated links elsewhere in a body are untouched. Applied to every
+    event body, not just online meetings.
