@@ -2447,6 +2447,7 @@ add_action( 'admin_menu', 'ms365cal_admin_menu' );
  * markup; never pass it anything derived from user input.
  */
 function ms365cal_help( $html ) {
+	// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- $html is always a hand-written literal at the call site, never user input; see the docblock above.
 	echo '<span class="ms365cal-help dashicons dashicons-editor-help" tabindex="0"><span class="ms365cal-tip">' . $html . '</span></span>';
 }
 
