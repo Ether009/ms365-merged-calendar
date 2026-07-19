@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.7.0
+ * Version:           2.7.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1221,9 +1221,9 @@ function ms365cal_events_window( $slugs, $start_date, $days, $force_live = false
 	// (settings['cache_grace_minutes']). Serve the old data immediately — the
 	// visitor never waits on a live Graph call for this — and fire a
 	// non-blocking background request to refresh it, so the next request finds
-	// a warm cache. This is what actually keeps things warm when an external
-	// pre-warm trigger's nominal interval and its real (possibly jittery)
-	// firing time don't quite line up with cache_minutes.
+	// a warm cache. Self-sufficient: any real visitor landing here while
+	// stale-but-in-grace is what triggers the refresh — no external scheduled
+	// trigger needed, just occasional organic traffic within the grace window.
 	$grace = max( 0, (int) $settings['cache_grace_minutes'] ) * MINUTE_IN_SECONDS;
 	if ( ! $force_live && $has_stale && $grace > 0 && ( $now - (int) $cached['fetched'] ) < ( $fresh + $grace ) ) {
 		ms365cal_trigger_background_refresh( $slugs, $start_date, $days );
@@ -2533,10 +2533,10 @@ function ms365cal_settings_page() {
 					<p class="description">Once the cache above expires, keep serving the old data for up
 					to this many <em>extra</em> minutes instead of making the visitor wait on a live Graph
 					call — a background request refreshes it at the same time, so the next visitor gets
-					fresh data from a warm cache. Set to <code>0</code> to disable and always fetch live the
-					moment the cache expires (the old behaviour). Useful if you pre-warm the cache with an
-					external scheduled request (e.g. a GitHub Actions cron hitting the public events
-					endpoint) that doesn't fire on an exact schedule — this absorbs the jitter.</p>
+					fresh data from a warm cache. This is self-sufficient: it needs no external pre-warming
+					service, just an occasional real visitor within the grace window (any visit while
+					stale-but-in-grace triggers the background refresh). Set to <code>0</code> to disable and
+					always fetch live the moment the cache expires (the old behaviour).</p>
 				</td></tr>
 				<tr><th>Timezone</th><td><input type="text" name="timezone" class="regular-text" value="<?php echo esc_attr( $s['timezone'] ); ?>"> <span class="description">e.g. Europe/Stockholm</span></td></tr>
 				<tr><th>Rate limit</th><td>
