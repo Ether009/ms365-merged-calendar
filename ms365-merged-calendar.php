@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.8.0
+ * Version:           2.9.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2529,135 +2529,151 @@ function ms365cal_settings_page() {
 	.ms365cal-help .ms365cal-tip{display:none;position:absolute;left:0;top:26px;z-index:10;width:340px;max-width:min(340px,80vw);padding:10px 12px;background:#1d2327;color:#f0f0f1;font-size:12.5px;font-weight:400;line-height:1.6;border-radius:4px;box-shadow:0 2px 10px rgba(0,0,0,.2);}
 	.ms365cal-help .ms365cal-tip code{background:rgba(255,255,255,.15);color:inherit;padding:1px 4px;border-radius:3px;}
 	.ms365cal-help:hover .ms365cal-tip,.ms365cal-help:focus .ms365cal-tip{display:block;}
+	.ms365cal-tab-panel{display:none;}
+	.ms365cal-tab-panel.is-active{display:block;}
 	</style>
 	<div class="wrap">
 		<h1>MS365 Merged Calendar</h1>
+		<h2 class="nav-tab-wrapper">
+			<a href="#calendars" class="nav-tab" data-tab="calendars">Calendars</a>
+			<a href="#caching" class="nav-tab" data-tab="caching">Caching</a>
+			<a href="#setup" class="nav-tab" data-tab="setup">Setup</a>
+			<a href="#diagnostics" class="nav-tab" data-tab="diagnostics">Diagnostics</a>
+		</h2>
 		<form method="post">
 			<?php wp_nonce_field( 'ms365cal_save', 'ms365cal_nonce' ); ?>
 
-			<h2>Azure app registration</h2>
-			<p>Register an app in Entra ID, grant <code>Application</code> permissions
-			<code>Calendars.Read</code> (shared mailboxes) and <code>Group.Read.All</code>
-			(group calendars), then grant admin consent and add a client secret.</p>
-			<table class="form-table">
-				<tr><th>Tenant ID</th><td><input type="text" name="tenant_id" class="regular-text" value="<?php echo esc_attr( $s['tenant_id'] ); ?>"></td></tr>
-				<tr><th>Client ID</th><td><input type="text" name="client_id" class="regular-text" value="<?php echo esc_attr( $s['client_id'] ); ?>"></td></tr>
-				<tr><th>Client secret<?php ms365cal_help( 'Stored in the database. For better security, define <code>MS365CAL_CLIENT_SECRET</code> in wp-config.php instead.' ); ?></th><td>
-					<input type="password" name="client_secret" class="regular-text" value="" placeholder="<?php echo $has_secret ? '&bull;&bull;&bull;&bull;&bull;&bull; (leave blank to keep)' : 'Enter secret'; ?>">
-				</td></tr>
-				<tr><th>Cache (minutes)</th><td><input type="number" name="cache_minutes" min="1" value="<?php echo esc_attr( $s['cache_minutes'] ); ?>"></td></tr>
-				<tr><th>Cache grace (minutes)<?php ms365cal_help( 'Once the cache expires, keep serving the old data for up to this many <em>extra</em> minutes instead of making the visitor wait on a live Graph call &mdash; a background request refreshes it at the same time. Self-sufficient: any real visitor within the grace window triggers the refresh, no external pre-warming needed. <code>0</code> disables this and always fetches live the moment the cache expires.' ); ?></th><td>
-					<input type="number" name="cache_grace_minutes" min="0" value="<?php echo esc_attr( $s['cache_grace_minutes'] ); ?>">
-				</td></tr>
-				<tr><th>Timezone</th><td><input type="text" name="timezone" class="regular-text" value="<?php echo esc_attr( $s['timezone'] ); ?>"> <span class="description">e.g. Europe/Stockholm</span></td></tr>
-				<tr><th>Rate limit<?php ms365cal_help( 'Applies to the public events endpoint. Set requests to <code>0</code> to disable the limiter. Cached views don\'t count toward it.' ); ?></th><td>
-					<input type="number" name="rate_max" min="0" value="<?php echo esc_attr( $s['rate_max'] ); ?>" style="width:6em">
-					requests per
-					<input type="number" name="rate_window" min="1" value="<?php echo esc_attr( $s['rate_window'] ); ?>" style="width:6em">
-					seconds, per IP.
-				</td></tr>
-				<tr><th>Outlook link<?php ms365cal_help( 'Off by default. When enabled, each expanded event includes a link to open it in Outlook on the web.' ); ?></th><td>
-					<label><input type="checkbox" name="show_outlook" <?php checked( ! empty( $s['show_outlook'] ) ); ?>> Show an &ldquo;Open in Outlook&rdquo; link in the expanded event details</label>
-				</td></tr>
-				<tr><th>Recurrence pattern<?php ms365cal_help( 'Off by default. <strong>Showing this requires an extra Microsoft Graph lookup per distinct recurring series</strong> to resolve the pattern, which can meaningfully slow down a cold (uncached) load &mdash; on this plugin\'s own benchmarks it cost roughly as much time as fetching the events themselves. Disabling it skips those lookups entirely for a faster cold load.' ); ?></th><td>
-					<label><input type="checkbox" name="show_recurrence" <?php checked( ! empty( $s['show_recurrence'] ) ); ?>> Show a recurrence pattern (e.g. &ldquo;Repeats weekly on Mon, Wed&rdquo;) for recurring events</label>
-				</td></tr>
-				<tr><th>Events per page<?php ms365cal_help( 'Number of events requested per calendar per Graph API call (<code>$top</code>). Default <code>100</code>. A calendar only needs a follow-up pagination request when it has more events in the window than this value, so raising it comfortably above your busiest calendar\'s normal event count lets most fetches skip pagination entirely. Larger values mean a bigger response payload; 999 is the practical ceiling.' ); ?></th><td>
-					<input type="number" name="events_top" min="10" max="999" value="<?php echo esc_attr( $s['events_top'] ); ?>" style="width:6em">
-				</td></tr>
-				<tr><th>Event descriptions<?php ms365cal_help( 'On by default. Fetching and sanitising every event\'s full HTML description on every list load adds real cost even when nobody reads most of them. With this on, the list fetch skips the description entirely and a small follow-up request (<code>GET /event-body</code>) fetches just that one event\'s description the first time it\'s expanded, cached briefly afterward. Turning it off restores the old behaviour &mdash; every description is fetched up front, so expanding is instant but cold loads are slower.' ); ?></th><td>
-					<label><input type="checkbox" name="lazy_body" <?php checked( ! empty( $s['lazy_body'] ) ); ?>> Only fetch an event's description when a visitor expands it (recommended)</label>
-				</td></tr>
-				<tr><th>Deploy key<?php ms365cal_help( 'Enables <code>POST /wp-json/ms365cal/v1/self-update</code> (header <code>X-MS365CAL-Deploy-Key</code>), which makes this site install the plugin\'s latest GitHub release on demand. Leave blank to keep the endpoint disabled. Anyone with the key can trigger a reinstall, so use a long random value and rotate it if it leaks. Defining <code>MS365CAL_DEPLOY_KEY</code> in wp-config.php is more secure and takes precedence.' ); ?></th><td>
-					<?php if ( $deploy_const ) : ?>
-						<p class="description"><strong>Set via <code>MS365CAL_DEPLOY_KEY</code> in wp-config.php</strong>, which overrides this field.</p>
-					<?php else : ?>
-						<input type="password" name="deploy_key" class="regular-text" value="" placeholder="<?php echo $has_deploy ? '&bull;&bull;&bull;&bull;&bull;&bull; (leave blank to keep)' : 'Paste a long random secret'; ?>">
-						<?php if ( $has_deploy ) : ?>
-							<label style="margin-left:8px"><input type="checkbox" name="deploy_key_clear" value="1"> Clear (disable endpoint)</label>
-						<?php endif; ?>
-					<?php endif; ?>
-				</td></tr>
-				<tr><th>Update source<?php ms365cal_help( 'GitHub repo to check for plugin updates, as <code>owner/repo</code> or a full URL. <strong>Blank means self-update stays off</strong> &mdash; nothing is assumed. The repo must be <strong>public</strong>, and each release needs a <code>vX.Y.Z</code> tag matching (or ahead of) the <code>Version:</code> header in the release you publish.' ); ?></th><td>
-					<?php if ( $update_repo_const ) : ?>
-						<p class="description"><strong>Set via <code>MS365CAL_UPDATE_REPO</code> in wp-config.php</strong>, which overrides this field. Current value: <code><?php echo esc_html( MS365CAL_UPDATE_REPO ); ?></code></p>
-					<?php else : ?>
-						<input type="text" name="update_repo" class="regular-text" value="<?php echo esc_attr( $s['update_repo'] ); ?>" placeholder="owner/repo">
-					<?php endif; ?>
-				</td></tr>
-			</table>
+			<div class="ms365cal-tab-panel" data-tab="calendars">
+				<p>For a <strong>group</strong>, the source is the group's object ID (GUID).
+				For a <strong>shared mailbox</strong>, the source is its email address.</p>
+				<table class="widefat" id="ms365cal-rows">
+					<thead><tr>
+						<th>Label</th><th>Slug</th><th>Type</th><th>Source (GUID or email)</th><th>Colour</th><th>On by default</th><th></th>
+					</tr></thead>
+					<tbody>
+					<?php
+					$rows = ! empty( $s['calendars'] ) ? $s['calendars'] : array(
+						array(
+							'slug'    => '',
+							'label'   => '',
+							'color'   => '#378add',
+							'type'    => 'group',
+							'source'  => '',
+							'default' => true,
+						),
+					);
+					foreach ( $rows as $i => $c ) :
+						?>
+						<tr>
+							<td><input type="text" name="cal[<?php echo (int) $i; ?>][label]" value="<?php echo esc_attr( $c['label'] ); ?>"></td>
+							<td><input type="text" name="cal[<?php echo (int) $i; ?>][slug]" value="<?php echo esc_attr( $c['slug'] ); ?>"></td>
+							<td>
+								<select name="cal[<?php echo (int) $i; ?>][type]">
+									<option value="group"   <?php selected( $c['type'], 'group' ); ?>>Group</option>
+									<option value="mailbox" <?php selected( $c['type'], 'mailbox' ); ?>>Shared mailbox</option>
+								</select>
+							</td>
+							<td><input type="text" name="cal[<?php echo (int) $i; ?>][source]" class="regular-text" value="<?php echo esc_attr( $c['source'] ); ?>"></td>
+							<td><input type="text" name="cal[<?php echo (int) $i; ?>][color]" value="<?php echo esc_attr( $c['color'] ); ?>" size="8"></td>
+							<td style="text-align:center"><input type="checkbox" name="cal[<?php echo (int) $i; ?>][default]" <?php checked( ! empty( $c['default'] ) ); ?>></td>
+							<td><button type="button" class="button ms365cal-del">Remove</button></td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody>
+				</table>
+				<p><button type="button" class="button" id="ms365cal-add">Add calendar</button></p>
 
-			<h2>Calendars</h2>
-			<p>For a <strong>group</strong>, the source is the group's object ID (GUID).
-			For a <strong>shared mailbox</strong>, the source is its email address.</p>
-			<table class="widefat" id="ms365cal-rows">
-				<thead><tr>
-					<th>Label</th><th>Slug</th><th>Type</th><th>Source (GUID or email)</th><th>Colour</th><th>On by default</th><th></th>
-				</tr></thead>
-				<tbody>
+				<h2>Usage</h2>
+				<p><code>[ms365_calendar]</code> &mdash; all calendars, current week (Monday&ndash;Sunday).<br>
+				<code>[ms365_calendar calendars="eng,events"]</code> &mdash; specific slugs. Navigate forward week by week; the current week is the earliest.</p>
+			</div>
+
+			<div class="ms365cal-tab-panel" data-tab="caching">
+				<table class="form-table">
+					<tr><th>Cache (minutes)</th><td><input type="number" name="cache_minutes" min="1" value="<?php echo esc_attr( $s['cache_minutes'] ); ?>"></td></tr>
+					<tr><th>Cache grace (minutes)<?php ms365cal_help( 'Once the cache expires, keep serving the old data for up to this many <em>extra</em> minutes instead of making the visitor wait on a live Graph call &mdash; a background request refreshes it at the same time. Self-sufficient: any real visitor within the grace window triggers the refresh, no external pre-warming needed. <code>0</code> disables this and always fetches live the moment the cache expires.' ); ?></th><td>
+						<input type="number" name="cache_grace_minutes" min="0" value="<?php echo esc_attr( $s['cache_grace_minutes'] ); ?>">
+					</td></tr>
+					<tr><th>Events per page<?php ms365cal_help( 'Number of events requested per calendar per Graph API call (<code>$top</code>). Default <code>100</code>. A calendar only needs a follow-up pagination request when it has more events in the window than this value, so raising it comfortably above your busiest calendar\'s normal event count lets most fetches skip pagination entirely. Larger values mean a bigger response payload; 999 is the practical ceiling.' ); ?></th><td>
+						<input type="number" name="events_top" min="10" max="999" value="<?php echo esc_attr( $s['events_top'] ); ?>" style="width:6em">
+					</td></tr>
+					<tr><th>Event descriptions<?php ms365cal_help( 'On by default. Fetching and sanitising every event\'s full HTML description on every list load adds real cost even when nobody reads most of them. With this on, the list fetch skips the description entirely and a small follow-up request (<code>GET /event-body</code>) fetches just that one event\'s description the first time it\'s expanded, cached briefly afterward. Turning it off restores the old behaviour &mdash; every description is fetched up front, so expanding is instant but cold loads are slower.' ); ?></th><td>
+						<label><input type="checkbox" name="lazy_body" <?php checked( ! empty( $s['lazy_body'] ) ); ?>> Only fetch an event's description when a visitor expands it (recommended)</label>
+					</td></tr>
+					<tr><th>Recurrence pattern<?php ms365cal_help( 'Off by default. <strong>Showing this requires an extra Microsoft Graph lookup per distinct recurring series</strong> to resolve the pattern, which can meaningfully slow down a cold (uncached) load &mdash; on this plugin\'s own benchmarks it cost roughly as much time as fetching the events themselves. Disabling it skips those lookups entirely for a faster cold load.' ); ?></th><td>
+						<label><input type="checkbox" name="show_recurrence" <?php checked( ! empty( $s['show_recurrence'] ) ); ?>> Show a recurrence pattern (e.g. &ldquo;Repeats weekly on Mon, Wed&rdquo;) for recurring events</label>
+					</td></tr>
+				</table>
+			</div>
+
+			<div class="ms365cal-tab-panel" data-tab="setup">
+				<p>Register an app in Entra ID, grant <code>Application</code> permissions
+				<code>Calendars.Read</code> (shared mailboxes) and <code>Group.Read.All</code>
+				(group calendars), then grant admin consent and add a client secret.</p>
+				<table class="form-table">
+					<tr><th>Tenant ID</th><td><input type="text" name="tenant_id" class="regular-text" value="<?php echo esc_attr( $s['tenant_id'] ); ?>"></td></tr>
+					<tr><th>Client ID</th><td><input type="text" name="client_id" class="regular-text" value="<?php echo esc_attr( $s['client_id'] ); ?>"></td></tr>
+					<tr><th>Client secret<?php ms365cal_help( 'Stored in the database. For better security, define <code>MS365CAL_CLIENT_SECRET</code> in wp-config.php instead.' ); ?></th><td>
+						<input type="password" name="client_secret" class="regular-text" value="" placeholder="<?php echo $has_secret ? '&bull;&bull;&bull;&bull;&bull;&bull; (leave blank to keep)' : 'Enter secret'; ?>">
+					</td></tr>
+					<tr><th>Timezone</th><td><input type="text" name="timezone" class="regular-text" value="<?php echo esc_attr( $s['timezone'] ); ?>"> <span class="description">e.g. Europe/Stockholm</span></td></tr>
+					<tr><th>Rate limit<?php ms365cal_help( 'Applies to the public events endpoint. Set requests to <code>0</code> to disable the limiter. Cached views don\'t count toward it.' ); ?></th><td>
+						<input type="number" name="rate_max" min="0" value="<?php echo esc_attr( $s['rate_max'] ); ?>" style="width:6em">
+						requests per
+						<input type="number" name="rate_window" min="1" value="<?php echo esc_attr( $s['rate_window'] ); ?>" style="width:6em">
+						seconds, per IP.
+					</td></tr>
+					<tr><th>Outlook link<?php ms365cal_help( 'Off by default. When enabled, each expanded event includes a link to open it in Outlook on the web.' ); ?></th><td>
+						<label><input type="checkbox" name="show_outlook" <?php checked( ! empty( $s['show_outlook'] ) ); ?>> Show an &ldquo;Open in Outlook&rdquo; link in the expanded event details</label>
+					</td></tr>
+					<tr><th>Deploy key<?php ms365cal_help( 'Enables <code>POST /wp-json/ms365cal/v1/self-update</code> (header <code>X-MS365CAL-Deploy-Key</code>), which makes this site install the plugin\'s latest GitHub release on demand. Leave blank to keep the endpoint disabled. Anyone with the key can trigger a reinstall, so use a long random value and rotate it if it leaks. Defining <code>MS365CAL_DEPLOY_KEY</code> in wp-config.php is more secure and takes precedence.' ); ?></th><td>
+						<?php if ( $deploy_const ) : ?>
+							<p class="description"><strong>Set via <code>MS365CAL_DEPLOY_KEY</code> in wp-config.php</strong>, which overrides this field.</p>
+						<?php else : ?>
+							<input type="password" name="deploy_key" class="regular-text" value="" placeholder="<?php echo $has_deploy ? '&bull;&bull;&bull;&bull;&bull;&bull; (leave blank to keep)' : 'Paste a long random secret'; ?>">
+							<?php if ( $has_deploy ) : ?>
+								<label style="margin-left:8px"><input type="checkbox" name="deploy_key_clear" value="1"> Clear (disable endpoint)</label>
+							<?php endif; ?>
+						<?php endif; ?>
+					</td></tr>
+					<tr><th>Update source<?php ms365cal_help( 'GitHub repo to check for plugin updates, as <code>owner/repo</code> or a full URL. <strong>Blank means self-update stays off</strong> &mdash; nothing is assumed. The repo must be <strong>public</strong>, and each release needs a <code>vX.Y.Z</code> tag matching (or ahead of) the <code>Version:</code> header in the release you publish.' ); ?></th><td>
+						<?php if ( $update_repo_const ) : ?>
+							<p class="description"><strong>Set via <code>MS365CAL_UPDATE_REPO</code> in wp-config.php</strong>, which overrides this field. Current value: <code><?php echo esc_html( MS365CAL_UPDATE_REPO ); ?></code></p>
+						<?php else : ?>
+							<input type="text" name="update_repo" class="regular-text" value="<?php echo esc_attr( $s['update_repo'] ); ?>" placeholder="owner/repo">
+						<?php endif; ?>
+					</td></tr>
+				</table>
+			</div>
+
+			<div class="ms365cal-tab-panel" data-tab="diagnostics">
 				<?php
-				$rows = ! empty( $s['calendars'] ) ? $s['calendars'] : array(
+				$debug_url = add_query_arg(
 					array(
-						'slug'    => '',
-						'label'   => '',
-						'color'   => '#378add',
-						'type'    => 'group',
-						'source'  => '',
-						'default' => true,
+						'debug'    => 1,
+						'days'     => 60,
+						'_wpnonce' => wp_create_nonce( 'wp_rest' ),
 					),
+					rest_url( 'ms365cal/v1/events' )
 				);
-				foreach ( $rows as $i => $c ) :
+				?>
+				<p>
+					<a href="<?php echo esc_url( $debug_url ); ?>" target="_blank" rel="noopener" class="button">Run calendar diagnostic</a>
+					<?php
+					ms365cal_help(
+						'Opens a JSON report of each calendar\'s live Graph status (HTTP code, event count, and any error).
+						A <code>403</code> means missing permission or admin consent; <code>404</code> means a wrong source ID
+						or type; <code>200</code> with <code>events: 0</code> means the credentials and IDs are fine, so it\'s
+						the date window. The link already carries the security nonce that REST cookie-auth requires &mdash;
+						typing the URL by hand without it returns the normal (public) empty response instead. The nonce
+						expires after a while, so reload this page for a fresh link. Only administrators can see the report.'
+					);
 					?>
-					<tr>
-						<td><input type="text" name="cal[<?php echo (int) $i; ?>][label]" value="<?php echo esc_attr( $c['label'] ); ?>"></td>
-						<td><input type="text" name="cal[<?php echo (int) $i; ?>][slug]" value="<?php echo esc_attr( $c['slug'] ); ?>"></td>
-						<td>
-							<select name="cal[<?php echo (int) $i; ?>][type]">
-								<option value="group"   <?php selected( $c['type'], 'group' ); ?>>Group</option>
-								<option value="mailbox" <?php selected( $c['type'], 'mailbox' ); ?>>Shared mailbox</option>
-							</select>
-						</td>
-						<td><input type="text" name="cal[<?php echo (int) $i; ?>][source]" class="regular-text" value="<?php echo esc_attr( $c['source'] ); ?>"></td>
-						<td><input type="text" name="cal[<?php echo (int) $i; ?>][color]" value="<?php echo esc_attr( $c['color'] ); ?>" size="8"></td>
-						<td style="text-align:center"><input type="checkbox" name="cal[<?php echo (int) $i; ?>][default]" <?php checked( ! empty( $c['default'] ) ); ?>></td>
-						<td><button type="button" class="button ms365cal-del">Remove</button></td>
-					</tr>
-				<?php endforeach; ?>
-				</tbody>
-			</table>
-			<p><button type="button" class="button" id="ms365cal-add">Add calendar</button></p>
+				</p>
+			</div>
 
 			<?php submit_button(); ?>
 		</form>
-
-		<h2>Usage</h2>
-		<p><code>[ms365_calendar]</code> &mdash; all calendars, current week (Monday&ndash;Sunday).<br>
-		<code>[ms365_calendar calendars="eng,events"]</code> &mdash; specific slugs. Navigate forward week by week; the current week is the earliest.</p>
-
-		<h2>Troubleshooting</h2>
-		<?php
-		$debug_url = add_query_arg(
-			array(
-				'debug'    => 1,
-				'days'     => 60,
-				'_wpnonce' => wp_create_nonce( 'wp_rest' ),
-			),
-			rest_url( 'ms365cal/v1/events' )
-		);
-		?>
-		<p>
-			<a href="<?php echo esc_url( $debug_url ); ?>" target="_blank" rel="noopener" class="button">Run calendar diagnostic</a>
-			<?php
-			ms365cal_help(
-				'Opens a JSON report of each calendar\'s live Graph status (HTTP code, event count, and any error).
-				A <code>403</code> means missing permission or admin consent; <code>404</code> means a wrong source ID
-				or type; <code>200</code> with <code>events: 0</code> means the credentials and IDs are fine, so it\'s
-				the date window. The link already carries the security nonce that REST cookie-auth requires &mdash;
-				typing the URL by hand without it returns the normal (public) empty response instead. The nonce
-				expires after a while, so reload this page for a fresh link. Only administrators can see the report.'
-			);
-			?>
-		</p>
 	</div>
 
 	<script>
@@ -2677,6 +2693,29 @@ function ms365cal_settings_page() {
 				if(body.querySelectorAll('tr').length>1)e.target.closest('tr').remove();
 			}
 		});
+	})();
+	(function(){
+		var STORAGE_KEY='ms365cal_active_tab';
+		var tabs=document.querySelectorAll('.nav-tab-wrapper .nav-tab');
+		var panels=document.querySelectorAll('.ms365cal-tab-panel');
+		function activate(name){
+			tabs.forEach(function(t){t.classList.toggle('nav-tab-active',t.getAttribute('data-tab')===name);});
+			panels.forEach(function(p){p.classList.toggle('is-active',p.getAttribute('data-tab')===name);});
+		}
+		tabs.forEach(function(t){
+			t.addEventListener('click',function(e){
+				e.preventDefault();
+				var name=t.getAttribute('data-tab');
+				activate(name);
+				try{localStorage.setItem(STORAGE_KEY,name);}catch(e){}
+			});
+		});
+		var initial='calendars';
+		try{
+			var saved=localStorage.getItem(STORAGE_KEY);
+			if(saved&&document.querySelector('.ms365cal-tab-panel[data-tab="'+saved+'"]'))initial=saved;
+		}catch(e){}
+		activate(initial);
 	})();
 	</script>
 	<?php
