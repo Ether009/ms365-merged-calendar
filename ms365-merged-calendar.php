@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.3.0
+ * Version:           2.3.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -25,11 +25,13 @@ define( 'MS365CAL_MAX_MASTERS', 200 ); // recurrence series masters resolved per
  * ---------------------------------------------------------------------------
  *  Automatic updates from GitHub (plugin-update-checker)
  * ---------------------------------------------------------------------------
- *  One-click updates in wp-admin, driven by GitHub Releases of the public repo
- *  Ether009/ms365-merged-calendar. The updater library is vendored under
- *  /plugin-update-checker. If it's absent (e.g. a bare single-file install)
- *  this is a no-op: the plugin still runs, it just won't self-update. WordPress
- *  compares each release's plugin "Version:" header against the installed one.
+ *  One-click updates in wp-admin, driven by GitHub Releases of a repo — by
+ *  default this plugin's own (Ether009/ms365-merged-calendar), overridable via
+ *  the 'update_repo' setting or MS365CAL_UPDATE_REPO (see ms365cal_cred()). The
+ *  updater library is vendored under /plugin-update-checker. If it's absent
+ *  (e.g. a bare single-file install) this is a no-op: the plugin still runs, it
+ *  just won't self-update. WordPress compares each release's plugin "Version:"
+ *  header against the installed one.
  */
 function ms365cal_init_updates() {
 	$loader = __DIR__ . '/plugin-update-checker/plugin-update-checker.php';
@@ -42,8 +44,13 @@ function ms365cal_init_updates() {
 		return;
 	}
 
+	$repo_url = ms365cal_normalize_repo_url( ms365cal_cred( 'update_repo' ) );
+	if ( '' === $repo_url ) {
+		$repo_url = 'https://github.com/Ether009/ms365-merged-calendar/'; // built-in default.
+	}
+
 	$checker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
-		'https://github.com/Ether009/ms365-merged-calendar/',
+		$repo_url,
 		__FILE__,
 		'ms365-merged-calendar'
 	);
@@ -73,6 +80,23 @@ function ms365cal_update_checker( $set = null ) {
 }
 
 /**
+ * Normalise an auto-updater repo setting into the full URL PUC expects. Accepts
+ * either a bare "owner/repo" shorthand (the form shown in the settings UI) or a
+ * full GitHub URL (e.g. pasted straight from the browser address bar). Returns ''
+ * unchanged so the caller can fall back to the built-in default repo.
+ */
+function ms365cal_normalize_repo_url( $repo ) {
+	$repo = trim( (string) $repo );
+	if ( '' === $repo ) {
+		return '';
+	}
+	if ( ! preg_match( '#^https?://#i', $repo ) ) {
+		$repo = 'https://github.com/' . ltrim( $repo, '/' );
+	}
+	return untrailingslashit( $repo ) . '/';
+}
+
+/**
  * ---------------------------------------------------------------------------
  *  Settings
  * ---------------------------------------------------------------------------
@@ -81,6 +105,7 @@ function ms365cal_update_checker( $set = null ) {
  *      define( 'MS365CAL_CLIENT_ID', '...' );
  *      define( 'MS365CAL_CLIENT_SECRET', '...' );
  *      define( 'MS365CAL_DEPLOY_KEY', '...' );  // self-update endpoint; also settable in the UI
+ *      define( 'MS365CAL_UPDATE_REPO', '...' ); // auto-updater source repo; also settable in the UI
  */
 function ms365cal_get_settings() {
 	$defaults = array(
@@ -93,6 +118,7 @@ function ms365cal_get_settings() {
 		'rate_window'   => MS365CAL_RATE_WINDOW,
 		'show_outlook'  => false,
 		'deploy_key'    => '',
+		'update_repo'   => '',
 		'calendars'     => array(),
 	);
 	$saved    = get_option( MS365CAL_OPTION, array() );
@@ -1038,9 +1064,10 @@ add_action( 'rest_api_init', 'ms365cal_register_rest' );
  *
  * Guardrails: off unless MS365CAL_DEPLOY_KEY is defined; key sent in the
  * X-MS365CAL-Deploy-Key header and compared with hash_equals(); a short transient lock
- * blocks concurrent/rapid triggers; and the update source is fixed to this plugin's
- * own GitHub repo, so the endpoint can only ever install this repo's latest release —
- * never arbitrary code.
+ * blocks concurrent/rapid triggers; and the update source is whatever repo the
+ * already-built update checker was configured with (this plugin's own by default, or
+ * 'update_repo' / MS365CAL_UPDATE_REPO if set — see ms365cal_init_updates()), so the
+ * endpoint can only ever install that repo's latest release — never arbitrary code.
  */
 function ms365cal_rest_self_update( WP_REST_Request $req ) {
 	// Effective key: wp-config constant MS365CAL_DEPLOY_KEY wins, else the DB setting
@@ -1764,6 +1791,8 @@ function ms365cal_settings_page() {
 			}
 		}
 
+		$new['update_repo'] = sanitize_text_field( wp_unslash( $_POST['update_repo'] ?? '' ) );
+
 		$cals = array();
 		$rows = isset( $_POST['cal'] ) && is_array( $_POST['cal'] ) ? $_POST['cal'] : array();
 		foreach ( $rows as $row ) {
@@ -1792,10 +1821,11 @@ function ms365cal_settings_page() {
 		echo '<div class="notice notice-success"><p>Settings saved.</p></div>';
 	}
 
-	$s            = ms365cal_get_settings();
-	$has_secret   = (bool) ( $s['client_secret'] || ( defined( 'MS365CAL_CLIENT_SECRET' ) && MS365CAL_CLIENT_SECRET ) );
-	$deploy_const = defined( 'MS365CAL_DEPLOY_KEY' ) && MS365CAL_DEPLOY_KEY;
-	$has_deploy   = (bool) ( $s['deploy_key'] || $deploy_const );
+	$s                 = ms365cal_get_settings();
+	$has_secret        = (bool) ( $s['client_secret'] || ( defined( 'MS365CAL_CLIENT_SECRET' ) && MS365CAL_CLIENT_SECRET ) );
+	$deploy_const      = defined( 'MS365CAL_DEPLOY_KEY' ) && MS365CAL_DEPLOY_KEY;
+	$has_deploy        = (bool) ( $s['deploy_key'] || $deploy_const );
+	$update_repo_const = defined( 'MS365CAL_UPDATE_REPO' ) && MS365CAL_UPDATE_REPO;
 	?>
 	<div class="wrap">
 		<h1>MS365 Merged Calendar</h1>
@@ -1841,6 +1871,20 @@ function ms365cal_settings_page() {
 						latest GitHub release on demand. Leave blank to keep the endpoint disabled. Anyone with
 						the key can trigger a reinstall, so use a long random value and rotate it if it leaks.
 						Defining <code>MS365CAL_DEPLOY_KEY</code> in wp-config.php is more secure and takes precedence.
+					</p>
+				</td></tr>
+				<tr><th>Update source</th><td>
+					<?php if ( $update_repo_const ) : ?>
+						<p class="description"><strong>Set via <code>MS365CAL_UPDATE_REPO</code> in wp-config.php</strong>, which overrides this field. Current value: <code><?php echo esc_html( MS365CAL_UPDATE_REPO ); ?></code></p>
+					<?php else : ?>
+						<input type="text" name="update_repo" class="regular-text" value="<?php echo esc_attr( $s['update_repo'] ); ?>" placeholder="Ether009/ms365-merged-calendar">
+					<?php endif; ?>
+					<p class="description">
+						GitHub repo the plugin checks for updates, as <code>owner/repo</code> or a full URL. Leave
+						blank to use this plugin's own repo (the default). Point it at your own fork's repo to get
+						updates from there instead &mdash; the fork must be <strong>public</strong>, and each release
+						needs a <code>vX.Y.Z</code> tag matching (or ahead of) the <code>Version:</code> header in
+						the release you publish.
 					</p>
 				</td></tr>
 			</table>
