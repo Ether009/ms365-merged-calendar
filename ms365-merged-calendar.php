@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.3.1
+ * Version:           2.3.2
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -25,13 +25,13 @@ define( 'MS365CAL_MAX_MASTERS', 200 ); // recurrence series masters resolved per
  * ---------------------------------------------------------------------------
  *  Automatic updates from GitHub (plugin-update-checker)
  * ---------------------------------------------------------------------------
- *  One-click updates in wp-admin, driven by GitHub Releases of a repo — by
- *  default this plugin's own (Ether009/ms365-merged-calendar), overridable via
- *  the 'update_repo' setting or MS365CAL_UPDATE_REPO (see ms365cal_cred()). The
- *  updater library is vendored under /plugin-update-checker. If it's absent
- *  (e.g. a bare single-file install) this is a no-op: the plugin still runs, it
- *  just won't self-update. WordPress compares each release's plugin "Version:"
- *  header against the installed one.
+ *  One-click updates in wp-admin, driven by GitHub Releases of a repo set via the
+ *  'update_repo' setting or MS365CAL_UPDATE_REPO (see ms365cal_cred()) — e.g.
+ *  "Ether009/ms365-merged-calendar" or a full GitHub URL. No repo configured (the
+ *  default) means self-update stays inactive; so does a missing updater library
+ *  (e.g. a bare single-file install) or an absent 'plugin-update-checker/' folder.
+ *  Either way the plugin still runs, it just won't self-update. WordPress compares
+ *  each release's plugin "Version:" header against the installed one.
  */
 function ms365cal_init_updates() {
 	$loader = __DIR__ . '/plugin-update-checker/plugin-update-checker.php';
@@ -46,7 +46,7 @@ function ms365cal_init_updates() {
 
 	$repo_url = ms365cal_normalize_repo_url( ms365cal_cred( 'update_repo' ) );
 	if ( '' === $repo_url ) {
-		$repo_url = 'https://github.com/Ether009/ms365-merged-calendar/'; // built-in default.
+		return; // no repo configured — self-update stays inactive, same as a missing library.
 	}
 
 	$checker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
@@ -1064,10 +1064,11 @@ add_action( 'rest_api_init', 'ms365cal_register_rest' );
  *
  * Guardrails: off unless MS365CAL_DEPLOY_KEY is defined; key sent in the
  * X-MS365CAL-Deploy-Key header and compared with hash_equals(); a short transient lock
- * blocks concurrent/rapid triggers; and the update source is whatever repo the
- * already-built update checker was configured with (this plugin's own by default, or
- * 'update_repo' / MS365CAL_UPDATE_REPO if set — see ms365cal_init_updates()), so the
+ * blocks concurrent/rapid triggers; and the update source is whatever repo
+ * 'update_repo' / MS365CAL_UPDATE_REPO names (see ms365cal_init_updates()), so the
  * endpoint can only ever install that repo's latest release — never arbitrary code.
+ * No repo configured means no update checker was built at all: this returns
+ * 'updater_unavailable' (500) rather than silently falling back to anything.
  */
 function ms365cal_rest_self_update( WP_REST_Request $req ) {
 	// Effective key: wp-config constant MS365CAL_DEPLOY_KEY wins, else the DB setting
@@ -1877,14 +1878,13 @@ function ms365cal_settings_page() {
 					<?php if ( $update_repo_const ) : ?>
 						<p class="description"><strong>Set via <code>MS365CAL_UPDATE_REPO</code> in wp-config.php</strong>, which overrides this field. Current value: <code><?php echo esc_html( MS365CAL_UPDATE_REPO ); ?></code></p>
 					<?php else : ?>
-						<input type="text" name="update_repo" class="regular-text" value="<?php echo esc_attr( $s['update_repo'] ); ?>" placeholder="Ether009/ms365-merged-calendar">
+						<input type="text" name="update_repo" class="regular-text" value="<?php echo esc_attr( $s['update_repo'] ); ?>" placeholder="owner/repo">
 					<?php endif; ?>
 					<p class="description">
-						GitHub repo the plugin checks for updates, as <code>owner/repo</code> or a full URL. Leave
-						blank to use this plugin's own repo (the default). Point it at your own fork's repo to get
-						updates from there instead &mdash; the fork must be <strong>public</strong>, and each release
-						needs a <code>vX.Y.Z</code> tag matching (or ahead of) the <code>Version:</code> header in
-						the release you publish.
+						GitHub repo to check for plugin updates, as <code>owner/repo</code> or a full URL.
+						<strong>Blank means self-update stays off</strong> &mdash; nothing is assumed. The repo must
+						be <strong>public</strong>, and each release needs a <code>vX.Y.Z</code> tag matching (or
+						ahead of) the <code>Version:</code> header in the release you publish.
 					</p>
 				</td></tr>
 			</table>

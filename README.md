@@ -40,18 +40,17 @@ the current week is the earliest they can go back to.
 
 ## Automatic updates
 
-By default, the plugin checks **this repo's GitHub Releases** for newer versions and
-offers a one-click update in **wp-admin → Plugins**, the same way any other plugin
-update would appear — no manual download needed after the initial install.
-
-### Using a different repo (e.g. your own fork)
-
-Under **Settings → MS365 Calendar → Update source**, enter a repo as `owner/repo`
-(or a full GitHub URL) to have the site check *that* repo for releases instead — or
+Self-update is **off by default** — no repo is assumed. To enable it, set **Settings →
+MS365 Calendar → Update source** to a GitHub repo, as `owner/repo` or a full URL (or
 define `MS365CAL_UPDATE_REPO` in `wp-config.php`, which takes precedence over the
-field. Leave both unset to keep using this plugin's own repo.
+field). Once set, the site checks that repo's GitHub Releases for newer versions and
+offers a one-click update in **wp-admin → Plugins**, the same way any other plugin
+update would appear.
 
-For updates to actually be offered from a custom repo:
+To track this plugin's own official releases, set it to `Ether009/ms365-merged-calendar`
+(this repo). To track a fork instead, point it at that fork's `owner/repo`.
+
+For updates to actually be offered from whichever repo you configure:
 
 - The repo must be **public** (the update checker doesn't authenticate).
 - Each release needs a **`vX.Y.Z` tag** whose version is equal to or ahead of the
