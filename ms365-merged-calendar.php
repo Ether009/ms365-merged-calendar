@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.6.0
+ * Version:           2.6.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -196,7 +196,9 @@ function ms365cal_get_token() {
  * ms365cal_rest_event_body()) — which cuts both the Graph response payload and the
  * per-event HTML-sanitisation work on every cold list fetch. 'id' is always selected
  * explicitly (rather than relying on Graph's default inclusion) since lazy mode needs
- * it to fetch a specific event's body later.
+ * it to fetch a specific event's body later. Lazy mode selects the much smaller
+ * 'bodyPreview' (a ~255-char plain-text truncation) instead, purely so the row can
+ * flag whether there's anything to fetch at all — see ms365cal_build_rows_from_page().
  */
 function ms365cal_view_url( $cal, $start_iso, $end_iso, $top, $lazy_body ) {
 	$source = rawurlencode( $cal['source'] );
@@ -205,7 +207,9 @@ function ms365cal_view_url( $cal, $start_iso, $end_iso, $top, $lazy_body ) {
 		: "https://graph.microsoft.com/v1.0/groups/{$source}/calendarView";
 
 	$select = 'id,subject,start,end,location,isAllDay,onlineMeeting,webLink,type,seriesMasterId';
-	if ( ! $lazy_body ) {
+	if ( $lazy_body ) {
+		$select .= ',bodyPreview';
+	} else {
 		$select .= ',body';
 	}
 
@@ -560,7 +564,10 @@ function ms365cal_sanitize_event_html( $html ) {
  * When $lazy_body is true, $raw_events never carried 'body' in the first place (see
  * ms365cal_view_url()), so every row's 'body' stays '' and the dedupe/boilerplate/
  * sanitise pipeline never runs here; the row instead carries the raw Graph event 'id'
- * so the client can fetch that one event's body on demand (ms365cal_rest_event_body()).
+ * (so the client can fetch that one event's body on demand via
+ * ms365cal_rest_event_body()) and a 'hasBody' flag derived from the cheap
+ * 'bodyPreview' field, so the client can skip rendering an expand affordance at all
+ * on events with nothing to show, instead of discovering that only after a click.
  *
  * @return array Row objects; a row with a series master still carries a temporary
  *               '_master' key for the caller to resolve and strip afterward.
@@ -663,7 +670,16 @@ function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $wi
 		// this point).
 		$is_online  = ! empty( $e['onlineMeeting'] );
 		$event_body = '';
-		if ( ! $lazy_body ) {
+		$has_body   = false;
+		if ( $lazy_body ) {
+			// bodyPreview is a plain-text truncation of the *raw* body, taken before
+			// our boilerplate-stripping would run — so an online meeting whose only
+			// content is the auto-inserted join block can show a non-empty preview
+			// even though the sanitised result would end up empty. Treated as an
+			// acceptable false positive (still clickable, just finds nothing) rather
+			// than fetching the real body here just to check.
+			$has_body = '' !== trim( (string) ( isset( $e['bodyPreview'] ) ? $e['bodyPreview'] : '' ) );
+		} else {
 			$event_body = isset( $e['body']['content'] ) ? trim( (string) $e['body']['content'] ) : '';
 			if ( '' !== $event_body ) {
 				$event_body = ms365cal_dedupe_repeated_links( $event_body );
@@ -698,7 +714,8 @@ function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $wi
 			$row['_master'] = $master_id; // temp key, stripped after resolution.
 		}
 		if ( $lazy_body ) {
-			$row['id'] = isset( $e['id'] ) ? $e['id'] : '';
+			$row['id']      = isset( $e['id'] ) ? $e['id'] : '';
+			$row['hasBody'] = $has_body;
 		}
 		$out[] = $row;
 	}
@@ -1966,7 +1983,8 @@ function ms365cal_assets() {
 	.ms365cal-cat{font-size:11px;font-weight:600;line-height:1.2;overflow-wrap:break-word;max-width:100%;padding:2px 0;}
 	.ms365cal-rail{width:4px;border-radius:999px;flex:0 0 auto;margin:10px 0;}
 	.ms365cal-hbody{flex:1;min-width:0;padding:10px 0;display:flex;flex-direction:column;}
-	.ms365cal-ev{font-size:15px;font-weight:600;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;color:inherit;font-family:inherit;display:flex;align-items:baseline;gap:9px;width:100%;line-height:1.35;}
+	.ms365cal-ev,.ms365cal-ev-static{font-size:15px;font-weight:600;background:none;border:0;padding:0;margin:0;text-align:left;color:inherit;font-family:inherit;display:flex;align-items:baseline;gap:9px;width:100%;line-height:1.35;}
+	.ms365cal-ev{cursor:pointer;}
 	.ms365cal-ev:hover .ms365cal-title{opacity:.65;}
 	.ms365cal-title{transition:opacity .12s;}
 	.ms365cal-caret{display:inline-block;flex:0 0 auto;font-size:9px;opacity:.4;transition:transform .15s;}
@@ -2078,13 +2096,17 @@ function ms365cal_assets() {
 				else if(e.online)d+='<div>Onlinem\u00f6te</div>';
 				if(cfg.showOutlook&&e.link)d+='<div><a href="'+esc(e.link)+'" target="_blank" rel="noopener">\u00d6ppna i Outlook \u2197</a></div>';
 
-				// In lazy mode (cfg.lazyBody) e.body is always '' \u2014 the description
-				// is fetched on first expand instead (see loadBody()), so we can't yet
-				// know whether an event has one; the detail wrapper is still rendered
-				// whenever there's an id to fetch with, so expanding is always available.
-				var lazyAttrs='';
-				if(cfg.lazyBody&&e.id)lazyAttrs=' data-cal="'+escAttr(e.cal)+'" data-id="'+escAttr(e.id)+'" data-loaded="0"';
-				var showDetail=d||(cfg.lazyBody&&e.id);
+				// In lazy mode (cfg.lazyBody), e.hasBody comes from Graph's cheap
+				// bodyPreview field (see ms365cal_build_rows_from_page()) \u2014 known at
+				// list-fetch time, so an event with nothing to show (no body, no join
+				// link, no online/outlook line) renders as plain non-clickable text
+				// instead of an expand button that would do nothing.
+				var lazyOk=cfg.lazyBody&&e.id&&e.hasBody;
+				var lazyAttrs=lazyOk?' data-cal="'+escAttr(e.cal)+'" data-id="'+escAttr(e.id)+'" data-loaded="0"':'';
+				var showDetail=d||lazyOk;
+				var titleHtml=showDetail
+					?'<button type="button" class="ms365cal-ev" aria-expanded="false"><span class="ms365cal-title">'+esc(e.title)+'</span></button>'
+					:'<div class="ms365cal-ev-static"><span class="ms365cal-title">'+esc(e.title)+'</span></div>';
 
 				html+='<div class="ms365cal-row">'
 					+'<div class="ms365cal-head">'
@@ -2095,9 +2117,7 @@ function ms365cal_assets() {
 						+'</div>'
 						+'<div class="ms365cal-rail" style="background:'+m.color+'"></div>'
 						+'<div class="ms365cal-hbody">'
-							+'<button type="button" class="ms365cal-ev" aria-expanded="false">'
-								+'<span class="ms365cal-title">'+esc(e.title)+'</span>'
-							+'</button>'
+							+titleHtml
 							+(showDetail?'<div class="ms365cal-detail"'+lazyAttrs+' hidden>'+d+'</div>':'')
 							+metaLine
 						+'</div>'
