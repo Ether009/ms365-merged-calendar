@@ -1,6 +1,6 @@
 name: Pre-warm calendar cache
 
-# Hits the site's own public /events endpoint every 15 minutes for the
+# Hits the site's own public /events endpoint on a schedule for the
 # current + next week, so the plugin's transient cache almost never actually
 # goes fully cold for a real visitor. Pairs with the stale-while-revalidate
 # grace window (settings['cache_grace_minutes'], default 60): even if this
