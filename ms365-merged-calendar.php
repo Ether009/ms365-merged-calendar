@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.4.0
+ * Version:           2.4.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -905,6 +905,20 @@ function ms365cal_fetch_recurrence_map_multi( $cals_by_slug, $refs, $token ) {
 }
 
 /**
+ * TEMPORARY diagnostic accessor for the last batched-fetch timing breakdown
+ * (investigating how much of the cold-fetch cost is the primary calendarView batch
+ * vs. recurrence-master resolution). Pass an array to store; call with no argument
+ * to retrieve the last one (or null). Remove once the investigation is done.
+ */
+function ms365cal_last_fetch_timing( $set = null ) {
+	static $timing = null;
+	if ( null !== $set ) {
+		$timing = $set;
+	}
+	return $timing;
+}
+
+/**
  * Fetch every configured calendar's first calendarView page together via Graph's
  * $batch endpoint (up to 20 sub-requests per call) instead of one sequential
  * request per calendar — the dominant cost on a cache miss (measured: ~5.4s for 10
@@ -918,6 +932,8 @@ function ms365cal_fetch_recurrence_map_multi( $cals_by_slug, $refs, $token ) {
  * @return array{all:array,throttled:bool,retry_after:int}
  */
 function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso, $tz ) {
+	$t_start = microtime( true ); // TEMPORARY: see ms365cal_last_fetch_timing().
+
 	try {
 		$zone = new DateTimeZone( $tz );
 	} catch ( Exception $e ) {
@@ -1063,6 +1079,8 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
 		}
 	}
 
+	$t_after_batch = microtime( true ); // TEMPORARY: see ms365cal_last_fetch_timing().
+
 	// Resolve recurrence for the batched calendars' collected series masters,
 	// together, in as few $batch calls as possible.
 	if ( ! empty( $need_masters ) ) {
@@ -1078,6 +1096,8 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
 		}
 	}
 
+	$t_after_recur = microtime( true ); // TEMPORARY: see ms365cal_last_fetch_timing().
+
 	// Rare stragglers (busy calendars needing pagination, or a chunk-level
 	// transport/HTTP failure): fetch them the old way, one at a time. Their own
 	// recurrence is already resolved internally by ms365cal_fetch_one().
@@ -1092,6 +1112,18 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
 		}
 		$events = array_merge( $events, $res['events'] );
 	}
+
+	// TEMPORARY: timing breakdown for investigating cold-fetch cost; see
+	// ms365cal_last_fetch_timing() and ms365cal_rest_events().
+	ms365cal_last_fetch_timing(
+		array(
+			'batch_ms'     => round( ( $t_after_batch - $t_start ) * 1000 ),
+			'recur_ms'     => round( ( $t_after_recur - $t_after_batch ) * 1000 ),
+			'straggler_ms' => round( ( microtime( true ) - $t_after_recur ) * 1000 ),
+			'total_ms'     => round( ( microtime( true ) - $t_start ) * 1000 ),
+			'stragglers'   => count( array_unique( $stragglers ) ),
+		)
+	);
 
 	return array(
 		'all'         => $events,
@@ -1589,7 +1621,17 @@ function ms365cal_rest_events( WP_REST_Request $req ) {
 		);
 	}
 
-	return new WP_REST_Response( array( 'events' => $events ), 200 );
+	$resp = new WP_REST_Response( array( 'events' => $events ), 200 );
+
+	// TEMPORARY: expose the batched-fetch timing breakdown (only present on a
+	// cache-miss request) so cold-fetch cost can be measured without wp-admin
+	// access. See ms365cal_last_fetch_timing(); remove once done investigating.
+	$timing = ms365cal_last_fetch_timing();
+	if ( $timing ) {
+		$resp->header( 'X-MS365CAL-Timing', wp_json_encode( $timing ) );
+	}
+
+	return $resp;
 }
 
 /**
