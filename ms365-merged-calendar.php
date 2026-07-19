@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.14.0
+ * Version:           2.14.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2098,7 +2098,7 @@ function ms365cal_nearest_color_set( $hex, $palette = null ) {
 /**
  * ---------------------------------------------------------------------------
  *  Shortcode — renders the shell only. Events load async via the REST route.
- *  [ms365_calendar calendars="eng,sales"]  (weekly, Monday-aligned)
+ *  [ms365_calendar calendars="eng,sales" enabled="eng"]  (weekly, Monday-aligned)
  * ---------------------------------------------------------------------------
  */
 function ms365cal_shortcode( $atts ) {
@@ -2768,8 +2768,12 @@ function ms365cal_settings_page() {
 				<p><button type="button" class="button" id="ms365cal-add">Add calendar</button></p>
 
 				<h2>Usage</h2>
-				<p><code>[ms365_calendar]</code> &mdash; all calendars, current week (Monday&ndash;Sunday).<br>
-				<code>[ms365_calendar calendars="eng,events"]</code> &mdash; specific slugs. Navigate forward week by week; the current week is the earliest.</p>
+				<p><code>[ms365_calendar]</code> &mdash; all calendars, current week (Monday&ndash;Sunday), all checked.<br>
+				<code>[ms365_calendar calendars="eng,events"]</code> &mdash; only these slugs are shown at all.<br>
+				<code>[ms365_calendar enabled="eng"]</code> &mdash; all shown, but only <code>eng</code> starts checked (the
+				rest are still there as chips, just unchecked until clicked).<br>
+				<code>[ms365_calendar calendars="eng,events" enabled="eng"]</code> &mdash; both together.<br>
+				Navigate forward week by week; the current week is the earliest.</p>
 			</div>
 
 			<div class="ms365cal-tab-panel" data-tab="caching">
