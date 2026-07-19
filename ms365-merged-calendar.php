@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.12.0
+ * Version:           2.12.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2677,12 +2677,13 @@ function ms365cal_settings_page() {
 	.ms365cal-tab-panel{display:none;}
 	.ms365cal-tab-panel.is-active{display:block;}
 	.ms365cal-color-picker{position:relative;display:inline-block;}
-	.ms365cal-color-trigger{display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid #8c8f94;border-radius:4px;background:#fff;cursor:pointer;font-size:13px;color:#1d2327;}
+	.ms365cal-color-trigger{display:flex;align-items:center;gap:8px;width:120px;box-sizing:border-box;padding:5px 10px;border:1px solid #8c8f94;border-radius:4px;background:#fff;cursor:pointer;font-size:13px;color:#1d2327;}
 	.ms365cal-color-trigger:hover{border-color:#2271b1;}
 	.ms365cal-color-bar{display:inline-block;width:26px;height:4px;border-radius:2px;flex:0 0 auto;}
-	.ms365cal-color-menu{display:none;position:absolute;top:100%;left:0;z-index:20;margin-top:2px;min-width:130px;max-height:260px;overflow-y:auto;background:#fff;border:1px solid #8c8f94;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.15);}
+	.ms365cal-color-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	.ms365cal-color-menu{display:none;position:absolute;top:100%;left:0;z-index:20;margin-top:2px;width:120px;box-sizing:border-box;max-height:260px;overflow-y:auto;background:#fff;border:1px solid #8c8f94;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.15);}
 	.ms365cal-color-menu.is-open{display:block;}
-	.ms365cal-color-option{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border:0;background:none;cursor:pointer;font-size:13px;color:#1d2327;text-align:left;}
+	.ms365cal-color-option{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:6px 10px;border:0;background:none;cursor:pointer;font-size:13px;color:#1d2327;text-align:left;}
 	.ms365cal-color-option:hover,.ms365cal-color-option:focus{background:#f0f0f1;outline:none;}
 	</style>
 	<div class="wrap">
