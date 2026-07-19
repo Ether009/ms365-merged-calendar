@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.3.2
+ * Version:           2.4.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -530,6 +530,149 @@ function ms365cal_sanitize_event_html( $html ) {
 }
 
 /**
+ * Build event rows from one page of raw Graph calendarView results (the 'value'
+ * array). Shared by the sequential per-calendar fetch (ms365cal_fetch_one(), used
+ * for the admin debug diagnostic and as a pagination fallback) and the batched
+ * fetch (ms365cal_fetch_calendars_batched()), so the event-shaping logic — time
+ * labels, the left-column t1/t2, longSpan, body sanitisation, recurrence-master
+ * collection — lives in exactly one place. $need_masters accumulates
+ * seriesMasterId => true for any recurring occurrence found, by reference.
+ *
+ * @return array Row objects; a row with a series master still carries a temporary
+ *               '_master' key for the caller to resolve and strip afterward.
+ */
+function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $window_start, $today0, $window_end, &$need_masters ) {
+	$out = array();
+
+	foreach ( $raw_events as $e ) {
+		$raw_start = isset( $e['start']['dateTime'] ) ? $e['start']['dateTime'] : '';
+		if ( '' === $raw_start ) {
+			continue;
+		}
+		try {
+			$st = new DateTime( $raw_start, $zone );
+		} catch ( Exception $ex ) {
+			continue;
+		}
+
+		$en      = null;
+		$raw_end = isset( $e['end']['dateTime'] ) ? $e['end']['dateTime'] : '';
+		if ( '' !== $raw_end ) {
+			try {
+				$en = new DateTime( $raw_end, $zone );
+			} catch ( Exception $ex ) {
+				$en = null;
+			}
+		}
+
+		$allday = ! empty( $e['isAllDay'] );
+
+		// True for a multi-day event whose real end falls after this window (e.g.
+		// a months-long ongoing series). Sent to the client so it can tell a
+		// genuinely-empty week from one that only "has" a long-running background
+		// event — used to decide whether to default to next week instead.
+		$multiday  = $en && ( $en->format( 'Y-m-d' ) !== $st->format( 'Y-m-d' ) );
+		$long_span = $multiday && ( $en > $window_end );
+
+		// Weekly grouping: an event still running today (started earlier, ends
+		// later) is pinned to today so it shows as current rather than under a
+		// past day; one that started before the window but already ended is
+		// pinned to the window start; everything else keeps its own start day.
+		if ( null !== $en && $en > $today0 && $st < $today0 ) {
+			$eff = clone $today0;
+		} elseif ( $st < $window_start ) {
+			$eff = clone $window_start;
+		} else {
+			$eff = $st;
+		}
+
+		$when = $en
+			? ms365cal_when_label( $st, $en, $allday, $time_fmt )
+			: ( $allday ? 'Heldag' : wp_date( $time_fmt, $st->getTimestamp(), $zone ) );
+
+		// Left-hand time column that flanks the rail. Single-day events show the
+		// times (or "Heldag"); multi-day events show the start date/time at the
+		// top and the end date/time at the bottom so the span stays visible
+		// without expanding (all-day skips the time).
+		$s_time = wp_date( $time_fmt, $st->getTimestamp(), $zone );
+		if ( $allday ) {
+			// Graph's all-day end is exclusive midnight; the last real day is -1.
+			$end_incl = $en ? ( clone $en )->modify( '-1 day' ) : clone $st;
+			if ( $end_incl->format( 'Y-m-d' ) > $st->format( 'Y-m-d' ) ) {
+				$t1 = wp_date( 'j M', $st->getTimestamp(), $zone );
+				$t2 = wp_date( 'j M', $end_incl->getTimestamp(), $zone );
+			} else {
+				$t1 = 'Heldag';
+				$t2 = '';
+			}
+		} elseif ( $en && $en->format( 'Y-m-d' ) !== $st->format( 'Y-m-d' ) ) {
+			$t1 = wp_date( 'j M', $st->getTimestamp(), $zone ) . ' ' . $s_time;
+			$t2 = wp_date( 'j M', $en->getTimestamp(), $zone ) . ' ' . wp_date( $time_fmt, $en->getTimestamp(), $zone );
+		} else {
+			$t1 = $s_time;
+			$t2 = $en ? wp_date( $time_fmt, $en->getTimestamp(), $zone ) : '';
+		}
+
+		// Recurrence: calendarView returns expanded occurrences; the pattern
+		// lives on the series master. Collect the master IDs now and resolve
+		// them together via $batch after paging (see below); until then, mark
+		// the row generic. Occurrences/exceptions with no master stay generic.
+		$recur     = '';
+		$master_id = isset( $e['seriesMasterId'] ) ? $e['seriesMasterId'] : '';
+		$etype     = isset( $e['type'] ) ? $e['type'] : '';
+		if ( '' !== $master_id ) {
+			$recur = 'Återkommande händelse';
+
+			$need_masters[ $master_id ] = true;
+		} elseif ( in_array( $etype, array( 'occurrence', 'exception' ), true ) ) {
+			$recur = 'Återkommande händelse';
+		}
+
+		// A local $event_body — kept distinct from the caller's response-JSON
+		// $body/$page_body variable, which a same-named local here used to shadow
+		// (broke pagination: isset() on a non-numeric string offset is false, so
+		// @odata.nextLink was never seen once any event on the page had reached
+		// this point).
+		$is_online  = ! empty( $e['onlineMeeting'] );
+		$event_body = isset( $e['body']['content'] ) ? trim( (string) $e['body']['content'] ) : '';
+		if ( '' !== $event_body ) {
+			$event_body = ms365cal_dedupe_repeated_links( $event_body );
+			if ( $is_online ) {
+				// The join link and "Teams meeting" location are shown separately in
+				// the UI, so the auto-inserted join/dial-in block in the body is just
+				// noise — strip it, keeping any real notes the organiser wrote.
+				$event_body = ms365cal_strip_meeting_boilerplate( $event_body );
+			}
+			$event_body = ms365cal_sanitize_event_html( $event_body );
+		}
+
+		$row = array(
+			'cal'      => $cal['slug'],
+			'title'    => isset( $e['subject'] ) && '' !== $e['subject'] ? $e['subject'] : '(ingen rubrik)',
+			'sort'     => $eff->format( 'Y-m-d\TH:i:s' ),
+			'dayKey'   => $eff->format( 'Y-m-d' ),
+			'dayLabel' => wp_date( 'D j M', $eff->getTimestamp(), $zone ),
+			't1'       => $t1,
+			't2'       => $t2,
+			'when'     => $when,
+			'recur'    => $recur,
+			'longSpan' => $long_span,
+			'body'     => $event_body,
+			'location' => isset( $e['location']['displayName'] ) ? $e['location']['displayName'] : '',
+			'online'   => $is_online,
+			'joinUrl'  => isset( $e['onlineMeeting']['joinUrl'] ) ? $e['onlineMeeting']['joinUrl'] : '',
+			'link'     => isset( $e['webLink'] ) ? $e['webLink'] : '',
+		);
+		if ( '' !== $master_id ) {
+			$row['_master'] = $master_id; // temp key, stripped after resolution.
+		}
+		$out[] = $row;
+	}
+
+	return $out;
+}
+
+/**
  * Single Graph GET with one short inline retry for a tiny Retry-After. Longer
  * throttles fall through to the caller's back-off handling.
  */
@@ -634,133 +777,16 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 			);
 		}
 
-		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
+		$page_body = json_decode( wp_remote_retrieve_body( $resp ), true );
 
-		if ( ! empty( $body['value'] ) && is_array( $body['value'] ) ) {
-			foreach ( $body['value'] as $e ) {
-				$raw_start = isset( $e['start']['dateTime'] ) ? $e['start']['dateTime'] : '';
-				if ( '' === $raw_start ) {
-					continue;
-				}
-				try {
-					$st = new DateTime( $raw_start, $zone );
-				} catch ( Exception $ex ) {
-					continue;
-				}
-
-				$en      = null;
-				$raw_end = isset( $e['end']['dateTime'] ) ? $e['end']['dateTime'] : '';
-				if ( '' !== $raw_end ) {
-					try {
-						$en = new DateTime( $raw_end, $zone );
-					} catch ( Exception $ex ) {
-						$en = null;
-					}
-				}
-
-				$allday = ! empty( $e['isAllDay'] );
-
-				// True for a multi-day event whose real end falls after this window (e.g.
-				// a months-long ongoing series). Sent to the client so it can tell a
-				// genuinely-empty week from one that only "has" a long-running background
-				// event — used to decide whether to default to next week instead.
-				$multiday  = $en && ( $en->format( 'Y-m-d' ) !== $st->format( 'Y-m-d' ) );
-				$long_span = $multiday && ( $en > $window_end );
-
-				// Weekly grouping: an event still running today (started earlier, ends
-				// later) is pinned to today so it shows as current rather than under a
-				// past day; one that started before the window but already ended is
-				// pinned to the window start; everything else keeps its own start day.
-				if ( null !== $en && $en > $today0 && $st < $today0 ) {
-					$eff = clone $today0;
-				} elseif ( $st < $window_start ) {
-					$eff = clone $window_start;
-				} else {
-					$eff = $st;
-				}
-
-				$when = $en
-					? ms365cal_when_label( $st, $en, $allday, $time_fmt )
-					: ( $allday ? 'Heldag' : wp_date( $time_fmt, $st->getTimestamp(), $zone ) );
-
-				// Left-hand time column that flanks the rail. Single-day events show the
-				// times (or "Heldag"); multi-day events show the start date/time at the
-				// top and the end date/time at the bottom so the span stays visible
-				// without expanding (all-day skips the time).
-				$s_time = wp_date( $time_fmt, $st->getTimestamp(), $zone );
-				if ( $allday ) {
-					// Graph's all-day end is exclusive midnight; the last real day is -1.
-					$end_incl = $en ? ( clone $en )->modify( '-1 day' ) : clone $st;
-					if ( $end_incl->format( 'Y-m-d' ) > $st->format( 'Y-m-d' ) ) {
-						$t1 = wp_date( 'j M', $st->getTimestamp(), $zone );
-						$t2 = wp_date( 'j M', $end_incl->getTimestamp(), $zone );
-					} else {
-						$t1 = 'Heldag';
-						$t2 = '';
-					}
-				} elseif ( $en && $en->format( 'Y-m-d' ) !== $st->format( 'Y-m-d' ) ) {
-					$t1 = wp_date( 'j M', $st->getTimestamp(), $zone ) . ' ' . $s_time;
-					$t2 = wp_date( 'j M', $en->getTimestamp(), $zone ) . ' ' . wp_date( $time_fmt, $en->getTimestamp(), $zone );
-				} else {
-					$t1 = $s_time;
-					$t2 = $en ? wp_date( $time_fmt, $en->getTimestamp(), $zone ) : '';
-				}
-
-				// Recurrence: calendarView returns expanded occurrences; the pattern
-				// lives on the series master. Collect the master IDs now and resolve
-				// them together via $batch after paging (see below); until then, mark
-				// the row generic. Occurrences/exceptions with no master stay generic.
-				$recur     = '';
-				$master_id = isset( $e['seriesMasterId'] ) ? $e['seriesMasterId'] : '';
-				$etype     = isset( $e['type'] ) ? $e['type'] : '';
-				if ( '' !== $master_id ) {
-					$recur = 'Återkommande händelse';
-
-					$need_masters[ $master_id ] = true;
-				} elseif ( in_array( $etype, array( 'occurrence', 'exception' ), true ) ) {
-					$recur = 'Återkommande händelse';
-				}
-
-				$is_online = ! empty( $e['onlineMeeting'] );
-				$body      = isset( $e['body']['content'] ) ? trim( (string) $e['body']['content'] ) : '';
-				if ( '' !== $body ) {
-					$body = ms365cal_dedupe_repeated_links( $body );
-					if ( $is_online ) {
-						// The join link and "Teams meeting" location are shown separately in
-						// the UI, so the auto-inserted join/dial-in block in the body is just
-						// noise — strip it, keeping any real notes the organiser wrote.
-						$body = ms365cal_strip_meeting_boilerplate( $body );
-					}
-					$body = ms365cal_sanitize_event_html( $body );
-				}
-
-				$row = array(
-					'cal'      => $cal['slug'],
-					'title'    => isset( $e['subject'] ) && '' !== $e['subject'] ? $e['subject'] : '(ingen rubrik)',
-					'sort'     => $eff->format( 'Y-m-d\TH:i:s' ),
-					'dayKey'   => $eff->format( 'Y-m-d' ),
-					'dayLabel' => wp_date( 'D j M', $eff->getTimestamp(), $zone ),
-					't1'       => $t1,
-					't2'       => $t2,
-					'when'     => $when,
-					'recur'    => $recur,
-					'longSpan' => $long_span,
-					'body'     => $body,
-					'location' => isset( $e['location']['displayName'] ) ? $e['location']['displayName'] : '',
-					'online'   => $is_online,
-					'joinUrl'  => isset( $e['onlineMeeting']['joinUrl'] ) ? $e['onlineMeeting']['joinUrl'] : '',
-					'link'     => isset( $e['webLink'] ) ? $e['webLink'] : '',
-				);
-				if ( '' !== $master_id ) {
-					$row['_master'] = $master_id; // temp key, stripped after resolution.
-				}
-				$out[] = $row;
-			}
+		if ( ! empty( $page_body['value'] ) && is_array( $page_body['value'] ) ) {
+			$rows = ms365cal_build_rows_from_page( $cal, $page_body['value'], $zone, $time_fmt, $window_start, $today0, $window_end, $need_masters );
+			$out  = array_merge( $out, $rows );
 		}
 
 		// Follow pagination. The nextLink is an absolute URL carrying the skiptoken
 		// plus the original $select/$top, so pass it through unchanged.
-		$url = isset( $body['@odata.nextLink'] ) ? $body['@odata.nextLink'] : '';
+		$url = isset( $page_body['@odata.nextLink'] ) ? $page_body['@odata.nextLink'] : '';
 	}
 
 	// One batched pass to turn the collected series-master IDs into readable
@@ -781,6 +807,296 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz ) {
 		'retry_after' => 0,
 		'status'      => 200,
 		'error'       => '',
+	);
+}
+
+/**
+ * Strip the Graph API host+version prefix from an absolute URL (e.g. one built by
+ * ms365cal_view_url()), for use as a $batch sub-request's relative "url" field.
+ */
+function ms365cal_graph_relative_url( $url ) {
+	return (string) preg_replace( '#^https://graph\.microsoft\.com/v[0-9.]+#', '', $url );
+}
+
+/**
+ * Resolve recurring-series master IDs across MULTIPLE calendars in as few Graph
+ * $batch calls as possible — one shared budget (MS365CAL_MAX_MASTERS, own static,
+ * independent of ms365cal_fetch_recurrence_map()'s), 20 masters per $batch request,
+ * mixing different calendars' relative bases within the same request since $batch
+ * sub-requests are independent of each other. $refs is a list of [slug, master_id]
+ * pairs (already de-duplicated by the caller). $cals_by_slug maps slug => calendar
+ * config, needed to build each master's relative URL. Returns a map keyed
+ * "slug|master_id" => recurrence text, for whichever were resolved.
+ */
+function ms365cal_fetch_recurrence_map_multi( $cals_by_slug, $refs, $token ) {
+	static $budget = MS365CAL_MAX_MASTERS;
+
+	$map = array();
+	if ( empty( $refs ) || $budget <= 0 ) {
+		return $map;
+	}
+
+	$refs   = array_slice( $refs, 0, $budget );
+	$budget = $budget - count( $refs );
+
+	foreach ( array_chunk( $refs, 20 ) as $chunk ) {
+		$requests = array();
+		$id_map   = array(); // batch sub-request id => "slug|master_id".
+
+		foreach ( $chunk as $i => $ref ) {
+			list( $slug, $mid ) = $ref;
+			if ( ! isset( $cals_by_slug[ $slug ] ) ) {
+				continue;
+			}
+			$rid            = (string) $i;
+			$id_map[ $rid ] = $slug . '|' . $mid;
+			$requests[]     = array(
+				'id'     => $rid,
+				'method' => 'GET',
+				'url'    => ms365cal_events_rel_base( $cals_by_slug[ $slug ] ) . '/' . rawurlencode( $mid ) . '?$select=recurrence',
+			);
+		}
+		if ( empty( $requests ) ) {
+			continue;
+		}
+
+		$resp = wp_remote_post(
+			'https://graph.microsoft.com/v1.0/$batch',
+			array(
+				'timeout' => 20,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $token,
+					'Content-Type'  => 'application/json',
+					'Accept'        => 'application/json',
+				),
+				'body'    => wp_json_encode( array( 'requests' => $requests ) ),
+			)
+		);
+
+		if ( is_wp_error( $resp ) || 200 !== (int) wp_remote_retrieve_response_code( $resp ) ) {
+			continue; // whole chunk unresolved; caller falls back to the generic label.
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
+		if ( empty( $body['responses'] ) || ! is_array( $body['responses'] ) ) {
+			continue;
+		}
+
+		foreach ( $body['responses'] as $sub ) {
+			$rid = isset( $sub['id'] ) ? (string) $sub['id'] : '';
+			if ( '' === $rid || ! isset( $id_map[ $rid ] ) ) {
+				continue;
+			}
+
+			$status = isset( $sub['status'] ) ? (int) $sub['status'] : 0;
+			$rec    = isset( $sub['body']['recurrence'] ) ? $sub['body']['recurrence'] : null;
+			if ( 200 !== $status || ! is_array( $rec ) ) {
+				continue;
+			}
+
+			$text = ms365cal_format_recurrence( $rec );
+			if ( '' !== $text ) {
+				$map[ $id_map[ $rid ] ] = $text;
+			}
+		}
+	}
+
+	return $map;
+}
+
+/**
+ * Fetch every configured calendar's first calendarView page together via Graph's
+ * $batch endpoint (up to 20 sub-requests per call) instead of one sequential
+ * request per calendar — the dominant cost on a cache miss (measured: ~5.4s for 10
+ * calendars sequentially, vs. this bringing it down to close to a single Graph
+ * round-trip). A calendar whose page has more than $top (100) events in the window
+ * — has @odata.nextLink — is rare for a typical weekly window; when it happens,
+ * that one calendar falls back to the existing sequential ms365cal_fetch_one(),
+ * which resolves its own pagination and recurrence, so its rows are excluded from
+ * the shared recurrence-consolidation pass below (they're already resolved).
+ *
+ * @return array{all:array,throttled:bool,retry_after:int}
+ */
+function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso, $tz ) {
+	try {
+		$zone = new DateTimeZone( $tz );
+	} catch ( Exception $e ) {
+		$zone = new DateTimeZone( 'UTC' );
+	}
+	$time_fmt = get_option( 'time_format', 'H:i' );
+
+	try {
+		$window_start = new DateTime( $start_iso, $zone );
+	} catch ( Exception $e ) {
+		$window_start = new DateTime( 'now', $zone );
+	}
+	try {
+		$window_end = new DateTime( $end_iso, $zone );
+	} catch ( Exception $e ) {
+		$window_end = clone $window_start;
+	}
+	$today0 = new DateTime( 'now', $zone );
+	$today0->setTime( 0, 0, 0 );
+
+	$cals_by_slug = array();
+	$url_by_slug  = array();
+	foreach ( $wanted as $cal ) {
+		$cals_by_slug[ $cal['slug'] ] = $cal;
+		$url_by_slug[ $cal['slug'] ]  = ms365cal_view_url( $cal, $start_iso, $end_iso );
+	}
+
+	$prefer       = 'outlook.timezone="' . $tz . '", outlook.body-content-type="html"';
+	$events       = array();
+	$stragglers   = array(); // slugs needing the full sequential fallback.
+	$need_masters = array(); // list of [slug, master_id] across the batched calendars.
+
+	foreach ( array_chunk( $url_by_slug, 20, true ) as $chunk ) {
+		$requests = array();
+		$id_map   = array(); // batch sub-request id => slug.
+		$i        = 0;
+		foreach ( $chunk as $slug => $view_url ) {
+			$rid            = (string) $i;
+			$id_map[ $rid ] = $slug;
+			$requests[]     = array(
+				'id'      => $rid,
+				'method'  => 'GET',
+				'url'     => ms365cal_graph_relative_url( $view_url ),
+				'headers' => array( 'Prefer' => $prefer ),
+			);
+			++$i;
+		}
+
+		$resp = wp_remote_post(
+			'https://graph.microsoft.com/v1.0/$batch',
+			array(
+				'timeout' => 25,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $token,
+					'Content-Type'  => 'application/json',
+					'Accept'        => 'application/json',
+				),
+				'body'    => wp_json_encode( array( 'requests' => $requests ) ),
+			)
+		);
+
+		if ( is_wp_error( $resp ) ) {
+			// Whole chunk unreachable — fall back to the sequential fetch per
+			// calendar rather than silently dropping them.
+			foreach ( $id_map as $slug ) {
+				$stragglers[] = $slug;
+			}
+			continue;
+		}
+
+		$code = (int) wp_remote_retrieve_response_code( $resp );
+		if ( 429 === $code || 503 === $code ) {
+			$ra = (int) wp_remote_retrieve_header( $resp, 'retry-after' );
+			return array(
+				'all'         => array(),
+				'throttled'   => true,
+				'retry_after' => $ra > 0 ? $ra : 30,
+			);
+		}
+		if ( 200 !== $code ) {
+			foreach ( $id_map as $slug ) {
+				$stragglers[] = $slug;
+			}
+			continue;
+		}
+
+		$batch_body = json_decode( wp_remote_retrieve_body( $resp ), true );
+		if ( empty( $batch_body['responses'] ) || ! is_array( $batch_body['responses'] ) ) {
+			foreach ( $id_map as $slug ) {
+				$stragglers[] = $slug;
+			}
+			continue;
+		}
+
+		foreach ( $batch_body['responses'] as $sub ) {
+			$rid = isset( $sub['id'] ) ? (string) $sub['id'] : '';
+			if ( '' === $rid || ! isset( $id_map[ $rid ] ) ) {
+				continue;
+			}
+			$slug   = $id_map[ $rid ];
+			$status = isset( $sub['status'] ) ? (int) $sub['status'] : 0;
+
+			if ( 429 === $status || 503 === $status ) {
+				$ra = isset( $sub['headers']['Retry-After'] ) ? (int) $sub['headers']['Retry-After'] : 0;
+				return array(
+					'all'         => array(),
+					'throttled'   => true,
+					'retry_after' => $ra > 0 ? $ra : 30,
+				);
+			}
+
+			if ( 200 !== $status ) {
+				continue; // 403/404/etc. for this one calendar — contributes zero events.
+			}
+
+			$page_body = isset( $sub['body'] ) && is_array( $sub['body'] ) ? $sub['body'] : array();
+
+			if ( ! empty( $page_body['@odata.nextLink'] ) ) {
+				// More than one page for this calendar — rare; fall back to the
+				// existing sequential fetch (it resolves its own recurrence too)
+				// rather than juggling batched pagination for an edge case.
+				$stragglers[] = $slug;
+				continue;
+			}
+
+			if ( ! empty( $page_body['value'] ) && is_array( $page_body['value'] ) ) {
+				$cal_need_masters = array();
+				$rows             = ms365cal_build_rows_from_page(
+					$cals_by_slug[ $slug ],
+					$page_body['value'],
+					$zone,
+					$time_fmt,
+					$window_start,
+					$today0,
+					$window_end,
+					$cal_need_masters
+				);
+				$events = array_merge( $events, $rows );
+				foreach ( array_keys( $cal_need_masters ) as $mid ) {
+					$need_masters[] = array( $slug, $mid );
+				}
+			}
+		}
+	}
+
+	// Resolve recurrence for the batched calendars' collected series masters,
+	// together, in as few $batch calls as possible.
+	if ( ! empty( $need_masters ) ) {
+		$recur_map = ms365cal_fetch_recurrence_map_multi( $cals_by_slug, $need_masters, $token );
+		foreach ( $events as $idx => $row ) {
+			if ( isset( $row['_master'] ) ) {
+				$key = $row['cal'] . '|' . $row['_master'];
+				if ( isset( $recur_map[ $key ] ) ) {
+					$events[ $idx ]['recur'] = $recur_map[ $key ];
+				}
+				unset( $events[ $idx ]['_master'] );
+			}
+		}
+	}
+
+	// Rare stragglers (busy calendars needing pagination, or a chunk-level
+	// transport/HTTP failure): fetch them the old way, one at a time. Their own
+	// recurrence is already resolved internally by ms365cal_fetch_one().
+	foreach ( array_unique( $stragglers ) as $slug ) {
+		$res = ms365cal_fetch_one( $cals_by_slug[ $slug ], $token, $start_iso, $end_iso, $tz );
+		if ( ! empty( $res['throttled'] ) ) {
+			return array(
+				'all'         => array(),
+				'throttled'   => true,
+				'retry_after' => (int) $res['retry_after'],
+			);
+		}
+		$events = array_merge( $events, $res['events'] );
+	}
+
+	return array(
+		'all'         => $events,
+		'throttled'   => false,
+		'retry_after' => 0,
 	);
 }
 
@@ -849,29 +1165,18 @@ function ms365cal_events_window( $slugs, $start_date, $days ) {
 		return $has_stale ? $cached['events'] : $token;
 	}
 
-	$all         = array();
-	$throttled   = false;
-	$retry_after = 30;
-	foreach ( $wanted as $cal ) {
-		$res = ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz );
-		if ( ! empty( $res['throttled'] ) ) {
-			// Graph throttles per app/tenant, so once one call is limited the rest
-			// will be too — stop and don't pile on more requests.
-			$throttled   = true;
-			$retry_after = (int) $res['retry_after'];
-			break;
-		}
-		$all = array_merge( $all, $res['events'] );
-	}
+	$res = ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso, $tz );
 
-	if ( $throttled ) {
-		$backoff = max( 1, min( $retry_after, MS365CAL_BACKOFF_MAX ) );
+	if ( ! empty( $res['throttled'] ) ) {
+		$backoff = max( 1, min( (int) $res['retry_after'], MS365CAL_BACKOFF_MAX ) );
 		set_transient( 'ms365cal_backoff', $now + $backoff, $backoff );
 		if ( $has_stale ) {
 			return $cached['events']; // seamless: slightly old data beats a blank calendar
 		}
 		return new WP_Error( 'ms365cal_throttled', 'The calendar service is busy.', array( 'retry_after' => $backoff ) );
 	}
+
+	$all = $res['all'];
 
 	usort(
 		$all,
