@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.2.3
+ * Version:           2.2.4
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1343,13 +1343,14 @@ function ms365cal_assets() {
 	.ms365cal-ev:hover .ms365cal-title{opacity:.65;}
 	.ms365cal-title{transition:opacity .12s;}
 	.ms365cal-caret{display:inline-block;flex:0 0 auto;font-size:9px;opacity:.4;transition:transform .15s;}
-	.ms365cal-recur-line{margin-top:auto;padding-top:8px;font-size:12px;opacity:.6;}
+	.ms365cal-meta-line{margin-top:auto;padding-top:8px;display:flex;align-items:center;gap:10px;font-size:12px;opacity:.6;}
+	.ms365cal-loc-line{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	.ms365cal-recur-line{flex:0 0 auto;margin-left:auto;white-space:nowrap;}
 	.ms365cal-detail{margin:6px 0 4px;font-size:13px;line-height:1.6;}
 	.ms365cal-detail div{margin:5px 0;}
 	.ms365cal-detail div:first-child{margin-top:0;}
 	.ms365cal-desc{white-space:pre-wrap;opacity:.9;}
 	.ms365cal-detail a{color:#185fa5;font-weight:600;text-decoration:underline;text-underline-offset:2px;}
-	.ms365cal-detail-label{opacity:.5;}
 	</style>
 	<script>
 	(function(){
@@ -1424,15 +1425,22 @@ function ms365cal_assets() {
 				var m=cfg.meta[e.cal];if(!m)return;
 				if(e.dayKey!==lastDay){html+='<div class="ms365cal-day">'+esc(e.dayLabel)+'</div>';lastDay=e.dayKey;}
 
+				// Bottom line: location on the left, recurrence pinned to the right (via
+				// margin-left:auto on the recurrence span, so it stays right-aligned
+				// whether or not a location is present).
 				var recurShort=e.recur?e.recur.replace(/^Upprepas\s+/,''):'';
-				var recurLine=e.recur?'<div class="ms365cal-recur-line">\u21bb '+esc(recurShort)+'</div>':'';
+				var locText=e.location?e.location:(e.online?'Online':'');
+				var metaBits='';
+				if(locText)metaBits+='<span class="ms365cal-loc-line">'+esc(locText)+'</span>';
+				if(e.recur)metaBits+='<span class="ms365cal-recur-line">\u21bb '+esc(recurShort)+'</span>';
+				var metaLine=metaBits?'<div class="ms365cal-meta-line">'+metaBits+'</div>':'';
 
 				// No "when" line here \u2014 the start/end times stay visible in the left
 				// column (which stretches with the row) while expanded, so repeating
-				// them in the body would be redundant.
+				// them in the body would be redundant. No location either \u2014 it's on
+				// the always-visible meta line above.
 				var d='';
 				if(e.body)d+='<div class="ms365cal-desc">'+esc(e.body)+'</div>';
-				if(e.location)d+='<div><span class="ms365cal-detail-label">Plats:</span> '+esc(e.location)+'</div>';
 				if(e.joinUrl)d+='<div><a href="'+esc(e.joinUrl)+'" target="_blank" rel="noopener">Anslut till onlinem\u00f6te</a></div>';
 				else if(e.online)d+='<div>Onlinem\u00f6te</div>';
 				if(cfg.showOutlook&&e.link)d+='<div><a href="'+esc(e.link)+'" target="_blank" rel="noopener">\u00d6ppna i Outlook \u2197</a></div>';
@@ -1450,7 +1458,7 @@ function ms365cal_assets() {
 								+'<span class="ms365cal-title">'+esc(e.title)+'</span>'
 							+'</button>'
 							+(d?'<div class="ms365cal-detail" hidden>'+d+'</div>':'')
-							+recurLine
+							+metaLine
 						+'</div>'
 					+'</div>'
 				+'</div>';

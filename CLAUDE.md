@@ -101,19 +101,22 @@ filter `ms365cal_client_ip` if behind a trusted proxy).
   shows its start date/time at the top and end date/time at the bottom (all-day skips the
   time) so the span is visible without expanding. The left column also holds the category
   **label** (`.ms365cal-cat`, coloured) in the middle (between `t1`/`t2` via the column's
-  `space-between`), so it flanks the rail alongside the times. Collapsed body = title plus
-  the recurrence pattern pinned to the **bottom** (`.ms365cal-recur-line`,
-  `margin-top:auto`) so it lines up with the end time. Titles are expand/collapse
-  **buttons** (accordion — one open). Expanding inserts `.ms365cal-detail` *inside*
-  `.ms365cal-hbody`, between the title and the recurrence line — not as a separate block
-  below the row — so the whole row (times column and rail included, via
+  `space-between`), so it flanks the rail alongside the times. Collapsed body = title, and
+  a **bottom-aligned meta line** (`.ms365cal-meta-line`, `margin-top:auto` so it lines up
+  with the end time) showing location on the left (`.ms365cal-loc-line`, truncates with
+  ellipsis) and the recurrence pattern on the right (`.ms365cal-recur-line`,
+  `margin-left:auto`, stays right-aligned even when location is absent). Titles are
+  expand/collapse **buttons** (accordion — one open). Expanding inserts `.ms365cal-detail`
+  *inside* `.ms365cal-hbody`, between the title and the meta line — not as a separate
+  block below the row — so the whole row (times column and rail included, via
   `.ms365cal-head`'s `align-items:stretch`) grows downward together; the times stay
   visible throughout, so the detail doesn't repeat them. Detail shows: the **full event
   body** (Graph `body` in plain text via `Prefer: outlook.body-content-type="text"`; for
   online meetings, `ms365cal_strip_meeting_boilerplate()` removes the auto-inserted
   Teams join/dial-in block — everything between the long underscore-rule lines — since
-  the join link and location cover that separately), location (detail-only), join link,
-  and optional Outlook link.
+  the join link and location cover that separately), join link, and optional Outlook
+  link. (Location itself lives on the meta line, not the detail — moved there so it's
+  visible without expanding.)
 
 ## Settings & constants
 
@@ -350,3 +353,9 @@ exists on a site once it's running 2.0.4+.
     inside `.ms365cal-hbody`, between the title and the recurrence line; the redundant
     "when" line was dropped from the detail since the times stay visible in the left
     column throughout. `.ms365cal-detail` is only rendered when there's content to show.
+33. Moved location out of the (expand-only) detail and onto the always-visible bottom
+    meta line, sharing it with recurrence: location left, recurrence right
+    (`margin-left:auto`, so it stays right-aligned whether or not a location is
+    present). `.ms365cal-recur-line` is now the inner right-aligned span within the new
+    `.ms365cal-meta-line` wrapper, which took over the old bottom-pinning
+    (`margin-top:auto`).
