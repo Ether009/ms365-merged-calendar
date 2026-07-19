@@ -31,9 +31,14 @@ No database schema and no activation hooks: deactivation fully reverts.
 ## Usage
 
 ```
-[ms365_calendar]                          all calendars, current week (Monday–Sunday)
-[ms365_calendar calendars="eng,events"]   specific slugs
+[ms365_calendar]                                        all calendars, current week (Monday–Sunday)
+[ms365_calendar calendars="eng,events"]                 only these slugs are shown at all
+[ms365_calendar enabled="eng"]                          all shown, but only "eng" starts checked
+[ms365_calendar calendars="eng,events" enabled="eng"]   both together
 ```
+
+Every calendar is checked (visible) by default; `enabled` scopes that down for a
+particular embed — the rest still appear as chips, just unchecked until clicked.
 
 The view is a fixed weekly window; visitors page forward/back one week at a time, and
 the current week is the earliest they can go back to.

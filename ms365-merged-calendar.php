@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.13.0
+ * Version:           2.14.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2112,6 +2112,7 @@ function ms365cal_shortcode( $atts ) {
 	$atts = shortcode_atts(
 		array(
 			'calendars' => '',
+			'enabled'   => '',
 			'days'      => 7,
 		),
 		$atts,
@@ -2136,6 +2137,13 @@ function ms365cal_shortcode( $atts ) {
 		return '<p>Ingen av de begärda kalendrarna finns.</p>';
 	}
 
+	// All calendars are on by default; 'enabled' scopes that down to a subset for
+	// this particular embed (the rest are still shown as chips, just unchecked
+	// until clicked) — e.g. [ms365_calendar enabled="eng,events"]. There's no
+	// global per-calendar "on by default" setting any more, only this per-embed
+	// override.
+	$enabled_slugs = '' === trim( $atts['enabled'] ) ? null : array_map( 'trim', explode( ',', $atts['enabled'] ) );
+
 	$window = min( MS365CAL_MAX_WINDOW, max( 1, (int) $atts['days'] ) );
 	$tz     = $settings['timezone'] ? $settings['timezone'] : 'UTC';
 
@@ -2156,7 +2164,7 @@ function ms365cal_shortcode( $atts ) {
 			'text'       => $set['text'],
 			'supplement' => $set['supplement'],
 		);
-		$defaults[ $c['slug'] ] = ! isset( $c['default'] ) || $c['default'];
+		$defaults[ $c['slug'] ] = null === $enabled_slugs || in_array( $c['slug'], $enabled_slugs, true );
 	}
 
 	$config = array(
@@ -2658,12 +2666,11 @@ function ms365cal_settings_page() {
 				$color = ms365cal_color_palette()[0]['primary'];
 			}
 			$cals[] = array(
-				'slug'    => $slug,
-				'label'   => sanitize_text_field( wp_unslash( $row['label'] ?? $slug ) ),
-				'color'   => $color,
-				'type'    => ms365cal_detect_calendar_type( $src ),
-				'source'  => $src,
-				'default' => ! empty( $row['default'] ),
+				'slug'   => $slug,
+				'label'  => sanitize_text_field( wp_unslash( $row['label'] ?? $slug ) ),
+				'color'  => $color,
+				'type'   => ms365cal_detect_calendar_type( $src ),
+				'source' => $src,
 			);
 		}
 		$new['calendars'] = $cals;
@@ -2714,18 +2721,17 @@ function ms365cal_settings_page() {
 				is gets detected from that format automatically — no need to say which.</p>
 				<table class="widefat" id="ms365cal-rows">
 					<thead><tr>
-						<th>Label</th><th>Slug</th><th>Source (GUID or email)</th><th>Colour</th><th>On by default</th><th></th>
+						<th>Label</th><th>Slug</th><th>Source (GUID or email)</th><th>Colour</th><th></th>
 					</tr></thead>
 					<tbody>
 					<?php
 					$palette = ms365cal_color_palette();
 					$rows    = ! empty( $s['calendars'] ) ? $s['calendars'] : array(
 						array(
-							'slug'    => '',
-							'label'   => '',
-							'color'   => $palette[0]['primary'],
-							'source'  => '',
-							'default' => true,
+							'slug'   => '',
+							'label'  => '',
+							'color'  => $palette[0]['primary'],
+							'source' => '',
 						),
 					);
 					foreach ( $rows as $i => $c ) :
@@ -2754,7 +2760,6 @@ function ms365cal_settings_page() {
 									</div>
 								</div>
 							</td>
-							<td style="text-align:center"><input type="checkbox" name="cal[<?php echo (int) $i; ?>][default]" <?php checked( ! empty( $c['default'] ) ); ?>></td>
 							<td><button type="button" class="button ms365cal-del">Remove</button></td>
 						</tr>
 					<?php endforeach; ?>
