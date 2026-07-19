@@ -1,0 +1,44 @@
+name: Pre-warm calendar cache
+
+# Hits the site's own public /events endpoint every 15 minutes for the
+# current + next week, so the plugin's transient cache almost never actually
+# goes fully cold for a real visitor. Pairs with the stale-while-revalidate
+# grace window (settings['cache_grace_minutes'], default 60): even if this
+# schedule slips (GitHub doesn't guarantee exact timing for scheduled
+# workflows), the grace window absorbs the gap and a visitor still gets an
+# instant response while the cache refreshes in the background.
+#
+# Uses the same repo variable DEPLOY_URL as release.yml's self-update
+# trigger (the site's base URL). No secret needed -- this only calls the
+# public, unauthenticated /events endpoint, exactly like a visitor's browser
+# would.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  prewarm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping current + next week
+        env:
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+        run: |
+          if [ -z "${DEPLOY_URL}" ]; then
+            echo "DEPLOY_URL not configured — skipping pre-warm."
+            exit 0
+          fi
+
+          this_monday=$(date -u -d "-$(( $(date -u +%u) - 1 )) days" +%Y-%m-%d)
+          next_monday=$(date -u -d "${this_monday} +7 days" +%Y-%m-%d)
+
+          for start in "${this_monday}" "${next_monday}"; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+              "${DEPLOY_URL%/}/wp-json/ms365cal/v1/events?start=${start}&days=7" || echo "000")
+            echo "start=${start} -> HTTP ${code}"
+            if [ "${code}" != "200" ]; then
+              echo "::notice::Pre-warm request for ${start} returned ${code} (non-fatal)."
+            fi
+          done
