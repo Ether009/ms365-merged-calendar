@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.15.0
+ * Version:           2.16.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2902,7 +2902,9 @@ function ms365cal_settings_page() {
 				address directly if you already know it. For a <strong>group</strong> the source is its
 				object ID (GUID); for a <strong>mailbox</strong> (shared, personal, or room) it's an email
 				address. Which one it is gets detected from that format automatically on save — no need to
-				say which.</p>
+				say which. <strong>Label</strong> and <strong>Slug</strong> stay disabled until a source is
+				set; picking one from the list fills the Label in for you (still editable afterward) and
+				assigns a random colour, but the Slug is left for you to fill in yourself.</p>
 				<table class="widefat" id="ms365cal-rows">
 					<thead><tr>
 						<th>Label</th><th>Slug</th><th>Source (GUID or email)</th><th>Colour</th><th></th>
@@ -2923,10 +2925,14 @@ function ms365cal_settings_page() {
 						// colour saved before this palette existed, so legacy colours still land
 						// somewhere sensible on first view instead of showing nothing selected.
 						$checked_set = ms365cal_color_set( $c['color'] );
+						// Label/slug only make sense once a source is chosen — see the source
+						// picker's JS, which flips these back on (and, when picked from the
+						// directory, fills the label) the moment the source field gets a value.
+						$no_source = ( '' === trim( $c['source'] ) );
 						?>
 						<tr>
-							<td><input type="text" name="cal[<?php echo (int) $i; ?>][label]" value="<?php echo esc_attr( $c['label'] ); ?>"></td>
-							<td><input type="text" name="cal[<?php echo (int) $i; ?>][slug]" value="<?php echo esc_attr( $c['slug'] ); ?>"></td>
+							<td><input type="text" name="cal[<?php echo (int) $i; ?>][label]" value="<?php echo esc_attr( $c['label'] ); ?>" <?php disabled( $no_source ); ?>></td>
+							<td><input type="text" name="cal[<?php echo (int) $i; ?>][slug]" value="<?php echo esc_attr( $c['slug'] ); ?>" <?php disabled( $no_source ); ?>></td>
 							<td>
 								<div class="ms365cal-src-picker">
 									<input type="text" name="cal[<?php echo (int) $i; ?>][source]" class="regular-text ms365cal-src-input" autocomplete="off" value="<?php echo esc_attr( $c['source'] ); ?>" placeholder="Type to search, or paste a GUID/email">
@@ -3076,6 +3082,7 @@ function ms365cal_settings_page() {
 			});
 			var firstOption=tr.querySelector('.ms365cal-color-option');
 			if(firstOption)setColorPicker(tr.querySelector('.ms365cal-color-picker'),firstOption.dataset.value,firstOption.dataset.name);
+			updateRowEnablement(tr);
 			body.appendChild(tr);idx++;
 		});
 		body.addEventListener('click',function(e){
@@ -3094,6 +3101,16 @@ function ms365cal_settings_page() {
 			picker.querySelector('.ms365cal-color-value').value=value;
 			picker.querySelector('.ms365cal-color-bar').style.background=value;
 			picker.querySelector('.ms365cal-color-label').textContent=name;
+		}
+		// Label/slug are only meaningful once a source is picked, so they stay
+		// disabled (greyed out) until the source field has something in it —
+		// re-checked on every keystroke/selection, not just once.
+		function updateRowEnablement(tr){
+			var hasSource=tr.querySelector('.ms365cal-src-input').value.trim()!=='';
+			var labelInput=tr.querySelector('input[name$="[label]"]');
+			var slugInput=tr.querySelector('input[name$="[slug]"]');
+			if(labelInput)labelInput.disabled=!hasSource;
+			if(slugInput)slugInput.disabled=!hasSource;
 		}
 		function closeAllMenus(){
 			document.querySelectorAll('.ms365cal-color-menu.is-open').forEach(function(m){
@@ -3232,14 +3249,21 @@ function ms365cal_settings_page() {
 			var menu=input.closest('.ms365cal-src-picker').querySelector('.ms365cal-src-menu');
 			menu.hidden=false;menu.classList.add('is-open');
 			renderSrcMenu(menu,input.value);
+			updateRowEnablement(input.closest('tr'));
 		});
 		body.addEventListener('click',function(e){
 			var option=e.target.closest('.ms365cal-src-option');
 			if(!option)return;
-			var picker=option.closest('.ms365cal-src-picker');
-			picker.querySelector('.ms365cal-src-input').value=option.dataset.source;
-			var labelInput=picker.closest('tr').querySelector('input[name$="[label]"]');
-			if(labelInput&&!labelInput.value)labelInput.value=option.dataset.label;
+			var row=option.closest('tr');
+			row.querySelector('.ms365cal-src-input').value=option.dataset.source;
+			var labelInput=row.querySelector('input[name$="[label]"]');
+			if(labelInput)labelInput.value=option.dataset.label;
+			updateRowEnablement(row);
+			var colorOptions=row.querySelectorAll('.ms365cal-color-option');
+			if(colorOptions.length){
+				var pick=colorOptions[Math.floor(Math.random()*colorOptions.length)];
+				setColorPicker(row.querySelector('.ms365cal-color-picker'),pick.dataset.value,pick.dataset.name);
+			}
 			closeAllSrcMenus();
 		});
 		document.addEventListener('click',function(e){
