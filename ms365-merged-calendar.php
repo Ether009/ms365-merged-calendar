@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.5.1
+ * Version:           2.6.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -119,6 +119,7 @@ function ms365cal_get_settings() {
 		'show_outlook'    => false,
 		'show_recurrence' => false,
 		'events_top'      => 100,
+		'lazy_body'       => true,
 		'deploy_key'      => '',
 		'update_repo'     => '',
 		'calendars'       => array(),
@@ -189,13 +190,24 @@ function ms365cal_get_token() {
  * $top is the configurable page size (settings['events_top']) — a calendar's page
  * only carries @odata.nextLink (triggering a pagination/straggler fallback) once its
  * event count in the window exceeds this value, so raising it above the busiest
- * calendar's normal event count lets most fetches skip pagination entirely.
+ * calendar's normal event count lets most fetches skip pagination entirely. When
+ * $lazy_body is true, 'body' is left out of $select entirely — the list view never
+ * needs it, only the on-demand event-body endpoint does (see
+ * ms365cal_rest_event_body()) — which cuts both the Graph response payload and the
+ * per-event HTML-sanitisation work on every cold list fetch. 'id' is always selected
+ * explicitly (rather than relying on Graph's default inclusion) since lazy mode needs
+ * it to fetch a specific event's body later.
  */
-function ms365cal_view_url( $cal, $start_iso, $end_iso, $top ) {
+function ms365cal_view_url( $cal, $start_iso, $end_iso, $top, $lazy_body ) {
 	$source = rawurlencode( $cal['source'] );
 	$base   = ( 'mailbox' === $cal['type'] )
 		? "https://graph.microsoft.com/v1.0/users/{$source}/calendarView"
 		: "https://graph.microsoft.com/v1.0/groups/{$source}/calendarView";
+
+	$select = 'id,subject,start,end,location,isAllDay,onlineMeeting,webLink,type,seriesMasterId';
+	if ( ! $lazy_body ) {
+		$select .= ',body';
+	}
 
 	return add_query_arg(
 		array(
@@ -203,7 +215,7 @@ function ms365cal_view_url( $cal, $start_iso, $end_iso, $top ) {
 			'endDateTime'   => $end_iso,
 			'$orderby'      => 'start/dateTime',
 			'$top'          => (int) $top,
-			'$select'       => 'subject,start,end,location,isAllDay,onlineMeeting,webLink,type,seriesMasterId,body',
+			'$select'       => $select,
 		),
 		$base
 	);
@@ -545,11 +557,15 @@ function ms365cal_sanitize_event_html( $html ) {
  * seriesMasterId => true for any recurring occurrence found, by reference. When
  * $show_recur is false, recurrence text/collection is skipped entirely (every row's
  * 'recur' stays '') so the caller never issues the extra $batch calls to resolve it.
+ * When $lazy_body is true, $raw_events never carried 'body' in the first place (see
+ * ms365cal_view_url()), so every row's 'body' stays '' and the dedupe/boilerplate/
+ * sanitise pipeline never runs here; the row instead carries the raw Graph event 'id'
+ * so the client can fetch that one event's body on demand (ms365cal_rest_event_body()).
  *
  * @return array Row objects; a row with a series master still carries a temporary
  *               '_master' key for the caller to resolve and strip afterward.
  */
-function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $window_start, $today0, $window_end, &$need_masters, $show_recur ) {
+function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $window_start, $today0, $window_end, &$need_masters, $show_recur, $lazy_body ) {
 	$out = array();
 
 	foreach ( $raw_events as $e ) {
@@ -646,16 +662,19 @@ function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $wi
 		// @odata.nextLink was never seen once any event on the page had reached
 		// this point).
 		$is_online  = ! empty( $e['onlineMeeting'] );
-		$event_body = isset( $e['body']['content'] ) ? trim( (string) $e['body']['content'] ) : '';
-		if ( '' !== $event_body ) {
-			$event_body = ms365cal_dedupe_repeated_links( $event_body );
-			if ( $is_online ) {
-				// The join link and "Teams meeting" location are shown separately in
-				// the UI, so the auto-inserted join/dial-in block in the body is just
-				// noise — strip it, keeping any real notes the organiser wrote.
-				$event_body = ms365cal_strip_meeting_boilerplate( $event_body );
+		$event_body = '';
+		if ( ! $lazy_body ) {
+			$event_body = isset( $e['body']['content'] ) ? trim( (string) $e['body']['content'] ) : '';
+			if ( '' !== $event_body ) {
+				$event_body = ms365cal_dedupe_repeated_links( $event_body );
+				if ( $is_online ) {
+					// The join link and "Teams meeting" location are shown separately in
+					// the UI, so the auto-inserted join/dial-in block in the body is just
+					// noise — strip it, keeping any real notes the organiser wrote.
+					$event_body = ms365cal_strip_meeting_boilerplate( $event_body );
+				}
+				$event_body = ms365cal_sanitize_event_html( $event_body );
 			}
-			$event_body = ms365cal_sanitize_event_html( $event_body );
 		}
 
 		$row = array(
@@ -677,6 +696,9 @@ function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $wi
 		);
 		if ( $show_recur && '' !== $master_id ) {
 			$row['_master'] = $master_id; // temp key, stripped after resolution.
+		}
+		if ( $lazy_body ) {
+			$row['id'] = isset( $e['id'] ) ? $e['id'] : '';
 		}
 		$out[] = $row;
 	}
@@ -712,7 +734,7 @@ function ms365cal_http_get( $url, $args ) {
  *         Graph's Retry-After (seconds) when present. 'status' is the HTTP code
  *         (0 for a transport error) and 'error' a short reason, both for debug.
  */
-function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz, $top, $show_recur ) {
+function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz, $top, $show_recur, $lazy_body ) {
 	$args = array(
 		'timeout' => 20,
 		'headers' => array(
@@ -744,7 +766,7 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz, $top, $sho
 
 	$out          = array();
 	$need_masters = array(); // seriesMasterId => true, resolved in one $batch pass after paging.
-	$url          = ms365cal_view_url( $cal, $start_iso, $end_iso, $top );
+	$url          = ms365cal_view_url( $cal, $start_iso, $end_iso, $top, $lazy_body );
 	$page         = 0;
 
 	while ( $url && $page < MS365CAL_MAX_PAGES ) {
@@ -792,7 +814,7 @@ function ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz, $top, $sho
 		$page_body = json_decode( wp_remote_retrieve_body( $resp ), true );
 
 		if ( ! empty( $page_body['value'] ) && is_array( $page_body['value'] ) ) {
-			$rows = ms365cal_build_rows_from_page( $cal, $page_body['value'], $zone, $time_fmt, $window_start, $today0, $window_end, $need_masters, $show_recur );
+			$rows = ms365cal_build_rows_from_page( $cal, $page_body['value'], $zone, $time_fmt, $window_start, $today0, $window_end, $need_masters, $show_recur, $lazy_body );
 			$out  = array_merge( $out, $rows );
 		}
 
@@ -931,7 +953,7 @@ function ms365cal_fetch_recurrence_map_multi( $cals_by_slug, $refs, $token ) {
  *
  * @return array{all:array,throttled:bool,retry_after:int}
  */
-function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso, $tz, $top, $show_recur ) {
+function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso, $tz, $top, $show_recur, $lazy_body ) {
 	try {
 		$zone = new DateTimeZone( $tz );
 	} catch ( Exception $e ) {
@@ -956,7 +978,7 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
 	$url_by_slug  = array();
 	foreach ( $wanted as $cal ) {
 		$cals_by_slug[ $cal['slug'] ] = $cal;
-		$url_by_slug[ $cal['slug'] ]  = ms365cal_view_url( $cal, $start_iso, $end_iso, $top );
+		$url_by_slug[ $cal['slug'] ]  = ms365cal_view_url( $cal, $start_iso, $end_iso, $top, $lazy_body );
 	}
 
 	$prefer       = 'outlook.timezone="' . $tz . '", outlook.body-content-type="html"';
@@ -1068,7 +1090,8 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
 					$today0,
 					$window_end,
 					$cal_need_masters,
-					$show_recur
+					$show_recur,
+					$lazy_body
 				);
 				$events           = array_merge( $events, $rows );
 				foreach ( array_keys( $cal_need_masters ) as $mid ) {
@@ -1099,7 +1122,7 @@ function ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso
 	// transport/HTTP failure): fetch them the old way, one at a time. Their own
 	// recurrence is already resolved internally by ms365cal_fetch_one().
 	foreach ( array_unique( $stragglers ) as $slug ) {
-		$res = ms365cal_fetch_one( $cals_by_slug[ $slug ], $token, $start_iso, $end_iso, $tz, $top, $show_recur );
+		$res = ms365cal_fetch_one( $cals_by_slug[ $slug ], $token, $start_iso, $end_iso, $tz, $top, $show_recur, $lazy_body );
 		if ( ! empty( $res['throttled'] ) ) {
 			return array(
 				'all'         => array(),
@@ -1128,6 +1151,7 @@ function ms365cal_events_window( $slugs, $start_date, $days ) {
 	$days       = min( MS365CAL_MAX_WINDOW, max( 1, (int) $days ) );
 	$top        = max( 10, min( 999, (int) $settings['events_top'] ) );
 	$show_recur = ! empty( $settings['show_recurrence'] );
+	$lazy_body  = ! empty( $settings['lazy_body'] );
 
 	$wanted = array_values(
 		array_filter(
@@ -1184,7 +1208,7 @@ function ms365cal_events_window( $slugs, $start_date, $days ) {
 		return $has_stale ? $cached['events'] : $token;
 	}
 
-	$res = ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso, $tz, $top, $show_recur );
+	$res = ms365cal_fetch_calendars_batched( $wanted, $token, $start_iso, $end_iso, $tz, $top, $show_recur, $lazy_body );
 
 	if ( ! empty( $res['throttled'] ) ) {
 		$backoff = max( 1, min( (int) $res['retry_after'], MS365CAL_BACKOFF_MAX ) );
@@ -1240,10 +1264,10 @@ function ms365cal_decode_jwt_claims( $jwt ) {
 }
 
 /**
- * Drop the cached Graph token, the back-off flag, and all window event caches so
- * the next fetch starts from a blank slate. The debug endpoint calls this to
- * force a brand-new token after a permissions/consent change, rather than
- * reusing a token that was minted before consent (which carries no roles).
+ * Drop the cached Graph token, the back-off flag, all window event caches, and all
+ * per-event lazy-body caches so the next fetch starts from a blank slate. The debug
+ * endpoint calls this to force a brand-new token after a permissions/consent change,
+ * rather than reusing a token that was minted before consent (which carries no roles).
  */
 function ms365cal_flush_cache() {
 	global $wpdb;
@@ -1253,13 +1277,25 @@ function ms365cal_flush_cache() {
 	delete_transient( MS365CAL_TOKEN_TRANSIENT );
 	delete_transient( 'ms365cal_backoff' );
 
-	// Window event caches use dynamic keys, so clear them by prefix. Best-effort:
-	// on a persistent object cache this DB sweep won't reach cached copies, but
-	// the diagnostic reads live anyway and the token above is what matters.
-	$like_val = $wpdb->esc_like( '_transient_ms365cal_w_' ) . '%';
-	$like_to  = $wpdb->esc_like( '_transient_timeout_ms365cal_w_' ) . '%';
+	// Window event caches and per-event lazy-body caches use dynamic keys, so
+	// clear them by prefix. Best-effort: on a persistent object cache this DB
+	// sweep won't reach cached copies, but the diagnostic reads live anyway and
+	// the token above is what matters.
+	$like_w_val = $wpdb->esc_like( '_transient_ms365cal_w_' ) . '%';
+	$like_w_to  = $wpdb->esc_like( '_transient_timeout_ms365cal_w_' ) . '%';
+	$like_b_val = $wpdb->esc_like( '_transient_ms365cal_body_' ) . '%';
+	$like_b_to  = $wpdb->esc_like( '_transient_timeout_ms365cal_body_' ) . '%';
 	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-	$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s", $like_val, $like_to ) );
+	$wpdb->query(
+		$wpdb->prepare(
+			'DELETE FROM ' . $wpdb->options . ' WHERE option_name LIKE %s OR option_name LIKE %s'
+			. ' OR option_name LIKE %s OR option_name LIKE %s',
+			$like_w_val,
+			$like_w_to,
+			$like_b_val,
+			$like_b_to
+		)
+	);
 }
 
 /**
@@ -1273,6 +1309,7 @@ function ms365cal_diagnose( $slugs, $start_date, $days ) {
 	$days       = min( MS365CAL_MAX_WINDOW, max( 1, (int) $days ) );
 	$top        = max( 10, min( 999, (int) $settings['events_top'] ) );
 	$show_recur = ! empty( $settings['show_recurrence'] );
+	$lazy_body  = ! empty( $settings['lazy_body'] );
 
 	$wanted = array_values(
 		array_filter(
@@ -1327,7 +1364,7 @@ function ms365cal_diagnose( $slugs, $start_date, $days ) {
 	$out['token_audience'] = isset( $claims['aud'] ) ? $claims['aud'] : '';
 
 	foreach ( $wanted as $cal ) {
-		$res                = ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz, $top, $show_recur );
+		$res                = ms365cal_fetch_one( $cal, $token, $start_iso, $end_iso, $tz, $top, $show_recur, $lazy_body );
 		$out['calendars'][] = array(
 			'slug'      => $cal['slug'],
 			'type'      => $cal['type'],
@@ -1365,6 +1402,23 @@ function ms365cal_register_rest() {
 				'debug' => array( 'sanitize_callback' => 'absint' ),
 			),
 			'callback'            => 'ms365cal_rest_events',
+		)
+	);
+
+	// On-demand single-event body (only registered/used when 'lazy_body' is on — see
+	// ms365cal_view_url()). 'cal' is a whitelisted slug, same as /events; 'id' is the
+	// raw Graph event id from that event's row, needed to fetch just this one event.
+	register_rest_route(
+		'ms365cal/v1',
+		'/event-body',
+		array(
+			'methods'             => 'GET',
+			'permission_callback' => '__return_true',
+			'args'                => array(
+				'cal' => array( 'sanitize_callback' => 'sanitize_title' ),
+				'id'  => array( 'sanitize_callback' => 'sanitize_text_field' ),
+			),
+			'callback'            => 'ms365cal_rest_event_body',
 		)
 	);
 
@@ -1615,6 +1669,133 @@ function ms365cal_rest_events( WP_REST_Request $req ) {
 
 /**
  * ---------------------------------------------------------------------------
+ *  REST endpoint:  GET /wp-json/ms365cal/v1/event-body?cal=eng&id=<graph-event-id>
+ * ---------------------------------------------------------------------------
+ *  On-demand body for a single event, used when 'lazy_body' is on so the list
+ *  fetch (ms365cal_events_window()) never has to fetch or sanitise every event's
+ *  body up front — only the one a visitor actually expands. 'cal' is validated
+ *  against the configured slug whitelist exactly like /events; 'id' is only ever
+ *  used to build a Graph URL scoped to that calendar's own /events collection
+ *  (rawurlencode()'d, so it can't be used to escape that path), never trusted for
+ *  anything else. Failures are soft: any non-throttle error returns 200 with an
+ *  empty body rather than surfacing Graph's error detail to an unauthenticated
+ *  caller — the front end just shows the event without a description.
+ */
+function ms365cal_rest_event_body( WP_REST_Request $req ) {
+	if ( ! ms365cal_rate_check() ) {
+		$limits = ms365cal_rate_limits();
+		$resp   = new WP_REST_Response( array( 'error' => 'rate_limited' ), 429 );
+		$resp->header( 'Retry-After', (string) max( 1, $limits['window'] ) );
+		return $resp;
+	}
+
+	$settings = ms365cal_get_settings();
+	$slug     = (string) $req->get_param( 'cal' );
+	$event_id = (string) $req->get_param( 'id' );
+	if ( '' === $slug || '' === $event_id ) {
+		return new WP_REST_Response( array( 'error' => 'bad_request' ), 400 );
+	}
+
+	$cal = null;
+	foreach ( $settings['calendars'] as $c ) {
+		if ( $c['slug'] === $slug ) {
+			$cal = $c;
+			break;
+		}
+	}
+	if ( null === $cal ) {
+		return new WP_REST_Response( array( 'error' => 'unknown_calendar' ), 404 );
+	}
+
+	// Same global back-off Graph throttling uses elsewhere: don't call Graph again
+	// while it's active, and don't cache anything since we have nothing to cache.
+	$now           = time();
+	$backoff_until = (int) get_transient( 'ms365cal_backoff' );
+	if ( $backoff_until > $now ) {
+		$resp = new WP_REST_Response(
+			array(
+				'error'       => 'upstream_busy',
+				'retry_after' => $backoff_until - $now,
+			),
+			429
+		);
+		$resp->header( 'Retry-After', (string) ( $backoff_until - $now ) );
+		return $resp;
+	}
+
+	$cache_key = 'ms365cal_body_' . md5( $slug . '|' . $event_id );
+	$cached    = get_transient( $cache_key );
+	if ( is_array( $cached ) && isset( $cached['body'] ) ) {
+		return new WP_REST_Response( array( 'body' => $cached['body'] ), 200 );
+	}
+
+	$token = ms365cal_get_token();
+	if ( is_wp_error( $token ) ) {
+		return new WP_REST_Response( array( 'body' => '' ), 200 );
+	}
+
+	$url = add_query_arg(
+		array( '$select' => 'body,onlineMeeting' ),
+		'https://graph.microsoft.com/v1.0' . ms365cal_events_rel_base( $cal ) . '/' . rawurlencode( $event_id )
+	);
+
+	$resp = wp_remote_get(
+		$url,
+		array(
+			'timeout' => 15,
+			'headers' => array(
+				'Authorization' => 'Bearer ' . $token,
+				'Prefer'        => 'outlook.body-content-type="html"',
+			),
+		)
+	);
+
+	if ( is_wp_error( $resp ) ) {
+		return new WP_REST_Response( array( 'body' => '' ), 200 );
+	}
+
+	$code = (int) wp_remote_retrieve_response_code( $resp );
+
+	if ( 429 === $code || 503 === $code ) {
+		$ra      = (int) wp_remote_retrieve_header( $resp, 'retry-after' );
+		$backoff = max( 1, min( $ra > 0 ? $ra : 30, MS365CAL_BACKOFF_MAX ) );
+		set_transient( 'ms365cal_backoff', $now + $backoff, $backoff );
+		$out = new WP_REST_Response(
+			array(
+				'error'       => 'upstream_busy',
+				'retry_after' => $backoff,
+			),
+			429
+		);
+		$out->header( 'Retry-After', (string) $backoff );
+		return $out;
+	}
+
+	if ( 200 !== $code ) {
+		// 403/404/etc — the event may have moved or been deleted since the list
+		// fetch. Fail soft rather than surfacing Graph's error to the visitor.
+		return new WP_REST_Response( array( 'body' => '' ), 200 );
+	}
+
+	$data      = json_decode( wp_remote_retrieve_body( $resp ), true );
+	$is_online = ! empty( $data['onlineMeeting'] );
+	$body      = isset( $data['body']['content'] ) ? trim( (string) $data['body']['content'] ) : '';
+	if ( '' !== $body ) {
+		$body = ms365cal_dedupe_repeated_links( $body );
+		if ( $is_online ) {
+			$body = ms365cal_strip_meeting_boilerplate( $body );
+		}
+		$body = ms365cal_sanitize_event_html( $body );
+	}
+
+	$fresh = max( 1, (int) $settings['cache_minutes'] ) * MINUTE_IN_SECONDS;
+	set_transient( $cache_key, array( 'body' => $body ), $fresh );
+
+	return new WP_REST_Response( array( 'body' => $body ), 200 );
+}
+
+/**
+ * ---------------------------------------------------------------------------
  *  Colour helper
  * ---------------------------------------------------------------------------
  */
@@ -1699,6 +1880,7 @@ function ms365cal_shortcode( $atts ) {
 
 	$config = array(
 		'rest'        => esc_url_raw( rest_url( 'ms365cal/v1/events' ) ),
+		'bodyRest'    => esc_url_raw( rest_url( 'ms365cal/v1/event-body' ) ),
 		'cals'        => wp_list_pluck( $scoped, 'slug' ),
 		'meta'        => $meta,
 		'defaults'    => $defaults,
@@ -1707,6 +1889,7 @@ function ms365cal_shortcode( $atts ) {
 		'startM'      => (int) $today->format( 'n' ),
 		'startD'      => (int) $today->format( 'j' ),
 		'showOutlook' => ! empty( $settings['show_outlook'] ),
+		'lazyBody'    => ! empty( $settings['lazy_body'] ),
 	);
 
 	$uid = 'ms365cal-' . wp_generate_password( 6, false, false );
@@ -1794,11 +1977,15 @@ function ms365cal_assets() {
 	.ms365cal-detail div,.ms365cal-detail p{margin:5px 0;}
 	.ms365cal-detail div:first-child,.ms365cal-detail p:first-child{margin-top:0;}
 	.ms365cal-desc{opacity:.9;}
+	.ms365cal-desc-loading{opacity:.5;}
 	.ms365cal-detail a{color:#185fa5;font-weight:600;text-decoration:underline;text-underline-offset:2px;}
 	</style>
 	<script>
 	(function(){
 	function esc(s){var d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML;}
+	// esc() alone doesn't escape quotes (safe for text nodes, not for inside a
+	// quoted HTML attribute) — used only for the id/slug we embed in data-* below.
+	function escAttr(s){return esc(s).replace(/"/g,'&quot;');}
 	function pad(n){return (n<10?'0':'')+n;}
 	function iso(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
 	function fmt(d){return d.toLocaleDateString('sv-SE',{day:'numeric',month:'short'});}
@@ -1891,6 +2078,14 @@ function ms365cal_assets() {
 				else if(e.online)d+='<div>Onlinem\u00f6te</div>';
 				if(cfg.showOutlook&&e.link)d+='<div><a href="'+esc(e.link)+'" target="_blank" rel="noopener">\u00d6ppna i Outlook \u2197</a></div>';
 
+				// In lazy mode (cfg.lazyBody) e.body is always '' \u2014 the description
+				// is fetched on first expand instead (see loadBody()), so we can't yet
+				// know whether an event has one; the detail wrapper is still rendered
+				// whenever there's an id to fetch with, so expanding is always available.
+				var lazyAttrs='';
+				if(cfg.lazyBody&&e.id)lazyAttrs=' data-cal="'+escAttr(e.cal)+'" data-id="'+escAttr(e.id)+'" data-loaded="0"';
+				var showDetail=d||(cfg.lazyBody&&e.id);
+
 				html+='<div class="ms365cal-row">'
 					+'<div class="ms365cal-head">'
 						+'<div class="ms365cal-times">'
@@ -1903,7 +2098,7 @@ function ms365cal_assets() {
 							+'<button type="button" class="ms365cal-ev" aria-expanded="false">'
 								+'<span class="ms365cal-title">'+esc(e.title)+'</span>'
 							+'</button>'
-							+(d?'<div class="ms365cal-detail" hidden>'+d+'</div>':'')
+							+(showDetail?'<div class="ms365cal-detail"'+lazyAttrs+' hidden>'+d+'</div>':'')
 							+metaLine
 						+'</div>'
 					+'</div>'
@@ -1936,6 +2131,34 @@ function ms365cal_assets() {
 			listEl.innerHTML=html;
 		}
 
+		// Lazy body fetch (cfg.lazyBody): the detail already carries data-cal/data-id
+		// from renderDays(); this is called once per event, the first time it's
+		// expanded, guarded by data-loaded so a rapid close/reopen doesn't refetch.
+		function loadBody(detail){
+			var cal=detail.getAttribute('data-cal'),id=detail.getAttribute('data-id');
+			detail.setAttribute('data-loaded','1');
+			if(!cal||!id)return;
+			var loading=document.createElement('div');
+			loading.className='ms365cal-desc-loading';
+			loading.textContent='Laddar…';
+			detail.insertBefore(loading,detail.firstChild);
+			fetch(cfg.bodyRest+'?cal='+encodeURIComponent(cal)+'&id='+encodeURIComponent(id),{headers:{'Accept':'application/json'}})
+				.then(function(r){return r.ok?r.json():{body:''};})
+				.then(function(data){
+					if(data&&data.body){
+						var desc=document.createElement('div');
+						desc.className='ms365cal-desc';
+						// Same trust boundary as the eager path: server-sanitised HTML
+						// (wp_kses, see ms365cal_sanitize_event_html()), injected as markup.
+						desc.innerHTML=data.body;
+						loading.replaceWith(desc);
+					}else{
+						loading.remove();
+					}
+				})
+				.catch(function(){loading.remove();});
+		}
+
 		// Expand/collapse: accordion for events (one open at a time); independent
 		// toggle for the "Tidigare Händelser" group.
 		listEl.addEventListener('click',function(ev){
@@ -1962,6 +2185,7 @@ function ms365cal_assets() {
 				if(prev)prev.setAttribute('aria-expanded','false');
 			}
 			detail.hidden=false;btn.setAttribute('aria-expanded','true');openDetail=detail;
+			if(detail.getAttribute('data-loaded')==='0')loadBody(detail);
 		});
 
 		function load(){
@@ -2108,6 +2332,7 @@ function ms365cal_settings_page() {
 		$new['show_outlook']    = ! empty( $_POST['show_outlook'] );
 		$new['show_recurrence'] = ! empty( $_POST['show_recurrence'] );
 		$new['events_top']      = max( 10, min( 999, (int) ( $_POST['events_top'] ?? 100 ) ) );
+		$new['lazy_body']       = ! empty( $_POST['lazy_body'] );
 
 		// Deploy key: like the client secret, a blank submission keeps the stored value;
 		// the explicit "clear" checkbox is the only way to erase it (disable the endpoint).
@@ -2201,6 +2426,16 @@ function ms365cal_settings_page() {
 					above your busiest calendar's normal event count for the window lets most fetches skip
 					pagination lookups entirely. Larger values mean a bigger response payload per request;
 					999 is the practical ceiling.</p>
+				</td></tr>
+				<tr><th>Event descriptions</th><td>
+					<label><input type="checkbox" name="lazy_body" <?php checked( ! empty( $s['lazy_body'] ) ); ?>> Only fetch an event's description when a visitor expands it (recommended)</label>
+					<p class="description">On by default. Fetching and sanitising every event's full HTML
+					description on every list load adds real cost even when nobody reads most of them. With
+					this on, the list fetch skips the description entirely and a small follow-up request
+					(<code>GET /event-body</code>) fetches just that one event's description the first time it's
+					expanded, cached briefly afterward. Turning it off restores the old behaviour &mdash; every
+					description is fetched and sanitised up front, so expanding is instant but cold loads are
+					slower.</p>
 				</td></tr>
 				<tr><th>Deploy key</th><td>
 					<?php if ( $deploy_const ) : ?>
