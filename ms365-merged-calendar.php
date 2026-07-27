@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.18.0
+ * Version:           2.18.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2447,14 +2447,18 @@ function ms365cal_assets() {
 	.ms365cal-chip.is-on{border-color:var(--cc);background:var(--cbg);color:var(--ct);opacity:1;}
 	.ms365cal-dot{width:9px;height:9px;border-radius:50%;background:currentColor;opacity:.35;}
 	.ms365cal-chip.is-on .ms365cal-dot{background:var(--cc);opacity:1;}
-	.ms365cal-mode-switch{display:flex;justify-content:flex-end;gap:6px;margin-bottom:8px;}
-	.ms365cal-mode-btn{font-size:12.5px;padding:6px 14px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.6;font-weight:600;transition:opacity .15s,background .15s,border-color .15s;}
-	.ms365cal-mode-btn:hover{opacity:.9;background:var(--ms-soft);}
-	.ms365cal-mode-btn.is-active{opacity:1;border-color:currentColor;background:var(--ms-line);}
-	.ms365cal-layout-switch{display:flex;justify-content:flex-end;gap:6px;margin-bottom:10px;}
-	.ms365cal-layout-btn{font-size:12px;padding:5px 12px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.6;transition:opacity .15s,background .15s,border-color .15s;}
-	.ms365cal-layout-btn:hover{opacity:.9;background:var(--ms-soft);}
-	.ms365cal-layout-btn.is-active{opacity:1;border-color:currentColor;background:var(--ms-soft);font-weight:600;}
+	/* Tier 1 (List/Calendar): a filled "track" with a pill thumb — the primary,
+	   higher-level choice. Tier 2 (below) is deliberately a different shape
+	   (squared-off tabs, not pills) and visually lighter, so the two read as
+	   different kinds of control rather than one long row of similar buttons. */
+	.ms365cal-mode-switch{display:flex;justify-content:flex-end;gap:2px;padding:3px;background:var(--ms-soft);border-radius:999px;margin:0 0 8px auto;width:max-content;}
+	.ms365cal-mode-btn{font-size:13px;padding:7px 16px;background:transparent;border:none;border-radius:999px;cursor:pointer;color:inherit;opacity:.55;font-weight:700;transition:opacity .15s,background .15s;}
+	.ms365cal-mode-btn:hover{opacity:.85;}
+	.ms365cal-mode-btn.is-active{opacity:1;background:var(--ms-line);}
+	.ms365cal-layout-switch{display:flex;justify-content:flex-end;gap:4px;padding-top:6px;margin-bottom:10px;}
+	.ms365cal-layout-btn{font-size:11px;padding:4px 10px;background:transparent;border:1px solid transparent;border-radius:6px;cursor:pointer;color:inherit;opacity:.5;font-weight:500;transition:opacity .15s,background .15s,border-color .15s;}
+	.ms365cal-layout-btn:hover{opacity:.85;background:var(--ms-soft);}
+	.ms365cal-layout-btn.is-active{opacity:1;border-color:var(--ms-line);background:var(--ms-soft);font-weight:700;}
 	.ms365cal-nav{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:16px;padding:8px;border:1px solid var(--ms-line);border-radius:14px;background:var(--ms-soft);}
 	.ms365cal-page{width:40px;height:40px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;border:none;border-radius:50%;background:rgba(120,120,125,.16);box-shadow:0 1px 2px rgba(0,0,0,.07);cursor:pointer;color:inherit;opacity:1;transition:background .15s,box-shadow .15s,transform .1s;}
 	.ms365cal-page:hover{background:rgba(120,120,125,.28);box-shadow:0 2px 5px rgba(0,0,0,.12);transform:translateY(-1px);}
@@ -2919,6 +2923,31 @@ function ms365cal_assets() {
 			});
 			dayCols.forEach(function(col){layoutLanes(col.timed);});
 
+			// Trim the hour axis to roughly bound the events actually present,
+			// rather than always showing the full 24h — a day with everything
+			// between 9 and 17 shouldn't force scrolling past 9 empty hours above
+			// and 9 below it. ~1h of padding on each side; falls back to a plain
+			// working-hours window when there's nothing timed to bound against
+			// (an all-day-only day, or a genuinely empty one).
+			var minStartMin=null,maxEndMin=null;
+			dayCols.forEach(function(col){col.timed.forEach(function(it){
+				var sM=it.start.getHours()*60+it.start.getMinutes();
+				var eM=it.end.getHours()*60+it.end.getMinutes();
+				if(eM<=sM)eM=24*60;
+				if(minStartMin===null||sM<minStartMin)minStartMin=sM;
+				if(maxEndMin===null||eM>maxEndMin)maxEndMin=eM;
+			});});
+			var PAD_MIN=60;
+			var rangeStartHour,rangeEndHour;
+			if(minStartMin===null){
+				rangeStartHour=7;rangeEndHour=19;
+			}else{
+				rangeStartHour=Math.max(0,Math.floor((minStartMin-PAD_MIN)/60));
+				rangeEndHour=Math.min(24,Math.ceil((maxEndMin+PAD_MIN)/60));
+				if(rangeEndHour<=rangeStartHour)rangeEndHour=Math.min(24,rangeStartHour+1);
+			}
+			var rangeStartMin=rangeStartHour*60;
+
 			var html='<div class="ms365cal-tl">';
 			html+='<div class="ms365cal-tl-header"><div class="ms365cal-tl-axis-spacer"></div>';
 			dayCols.forEach(function(col){
@@ -2943,8 +2972,8 @@ function ms365cal_assets() {
 			}
 
 			html+='<div class="ms365cal-tl-body"><div class="ms365cal-tl-axis">';
-			for(var h=0;h<24;h++)html+='<div class="ms365cal-tl-hour">'+pad(h)+':00</div>';
-			html+='</div><div class="ms365cal-tl-grid" style="height:'+(24*HOUR_PX)+'px">';
+			for(var h=rangeStartHour;h<rangeEndHour;h++)html+='<div class="ms365cal-tl-hour">'+pad(h)+':00</div>';
+			html+='</div><div class="ms365cal-tl-grid" style="height:'+((rangeEndHour-rangeStartHour)*HOUR_PX)+'px">';
 			dayCols.forEach(function(col){
 				html+='<div class="ms365cal-tl-daycol'+(col.key===todayKey?' is-today':'')+'">';
 				col.timed.forEach(function(it){
@@ -2952,7 +2981,7 @@ function ms365cal_assets() {
 					var startMin=it.start.getHours()*60+it.start.getMinutes();
 					var endMin=it.end.getHours()*60+it.end.getMinutes();
 					if(it.end.getDate()!==it.start.getDate()||endMin<=startMin)endMin=24*60;
-					var top=(startMin/60)*HOUR_PX;
+					var top=((startMin-rangeStartMin)/60)*HOUR_PX;
 					var height=Math.max(18,((endMin-startMin)/60)*HOUR_PX);
 					var widthPct=100/it.laneCount,leftPct=it.laneIndex*widthPct;
 					html+='<div class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:'+widthPct+'%;background:'+m.primary+'" title="'+escAttr(it.ev.title)+'">'
@@ -2964,17 +2993,6 @@ function ms365cal_assets() {
 			});
 			html+='</div></div></div>';
 			listEl.innerHTML=html;
-
-			// Scroll to just before the day's first event (or 07:00 with nothing
-			// scheduled) instead of opening on midnight.
-			var earliestMin=null;
-			dayCols.forEach(function(col){col.timed.forEach(function(it){
-				var m=it.start.getHours()*60+it.start.getMinutes();
-				if(earliestMin===null||m<earliestMin)earliestMin=m;
-			});});
-			var scrollHour=earliestMin===null?7:Math.max(0,Math.floor(earliestMin/60)-1);
-			var bodyEl=listEl.querySelector('.ms365cal-tl-body');
-			if(bodyEl)bodyEl.scrollTop=scrollHour*HOUR_PX;
 		}
 
 		// Month: a read-only grid (no drill-down yet) \u2014 each cell capped at a few
