@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.20.0
+ * Version:           2.20.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2535,7 +2535,7 @@ function ms365cal_assets() {
 	.ms365cal-tl-hdate{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;margin-top:2px;font-size:15px;font-weight:600;}
 	.ms365cal-tl-allday{display:flex;padding:4px 0;border-bottom:1px solid var(--ms-line);}
 	.ms365cal-tl-allday-cell{flex:1;padding:0 2px;display:flex;flex-direction:column;gap:2px;min-width:0;}
-	.ms365cal-tl-chip{display:block;width:100%;border:none;font:inherit;text-align:left;cursor:pointer;font-size:11px;padding:2px 6px;border-radius:4px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	.ms365cal-tl-chip{display:block;width:100%;border:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;font-size:11px;padding:2px 6px;border-radius:4px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 	.ms365cal-tl-chip:hover,.ms365cal-tl-chip:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
 	.ms365cal-tl-body{display:flex;max-height:560px;overflow-y:auto;}
 	.ms365cal-tl-axis{flex:0 0 42px;}
@@ -2544,7 +2544,7 @@ function ms365cal_assets() {
 	.ms365cal-tl-grid{flex:1;display:flex;position:relative;}
 	.ms365cal-tl-daycol{flex:1;position:relative;min-width:0;border-left:1px solid var(--ms-line);background-image:repeating-linear-gradient(to bottom,transparent,transparent 47px,var(--ms-line) 47px,var(--ms-line) 48px);}
 	.ms365cal-tl-daycol.is-today{background-color:var(--ms-soft);}
-	.ms365cal-tl-event{display:block;border:none;font:inherit;text-align:left;cursor:pointer;position:absolute;box-sizing:border-box;border-radius:4px;padding:2px 5px;font-size:11px;line-height:1.3;color:#fff;overflow:hidden;}
+	.ms365cal-tl-event{display:block;border:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;position:absolute;box-sizing:border-box;border-radius:4px;padding:2px 5px;font-size:11px;line-height:1.3;color:#fff;overflow:hidden;}
 	.ms365cal-tl-event:hover,.ms365cal-tl-event:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
 	.ms365cal-tl-ev-time{font-weight:700;opacity:.85;}
 	/* Calendar mode: Month grid (read-only — no drill-down yet). */
@@ -2555,13 +2555,13 @@ function ms365cal_assets() {
 	.ms365cal-month-cell.is-outside{opacity:.4;}
 	.ms365cal-month-daynum{display:inline-block;min-width:20px;text-align:center;font-size:12px;font-weight:600;margin-bottom:3px;}
 	.ms365cal-month-cell.is-today .ms365cal-month-daynum{background:var(--ms-line);border-radius:50%;}
-	.ms365cal-month-chip{display:block;width:100%;border:none;font:inherit;text-align:left;cursor:pointer;font-size:10.5px;padding:1px 5px;border-radius:3px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px;}
+	.ms365cal-month-chip{display:block;width:100%;border:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;font-size:10.5px;padding:1px 5px;border-radius:3px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px;}
 	.ms365cal-month-chip:hover,.ms365cal-month-chip:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
 	.ms365cal-month-more{font-size:10px;opacity:.6;}
 	/* Calendar mode: event-detail popup, opened by clicking a timeline event or a Month/all-day chip — those are small colour blocks with no room for List's inline accordion. A solid background is unavoidable here (unlike the rest of this plugin, which stays transparent to blend with the host theme) since a popup has to stay legible over arbitrary page content behind it; Canvas/CanvasText are the dark-mode-aware system colours for "page background/text", with a plain #fff/#1d2327 fallback for browsers that don't support them. */
 	.ms365cal-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;}
 	.ms365cal-modal{position:relative;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;background:#fff;background:Canvas;color:#1d2327;color:CanvasText;border-radius:12px;padding:28px 24px 24px;box-shadow:0 12px 40px rgba(0,0,0,.3);}
-	.ms365cal-modal-close{position:absolute;top:12px;right:12px;width:32px;height:32px;border:none;border-radius:50%;background:rgba(120,120,125,.14);cursor:pointer;font-size:14px;color:inherit;display:flex;align-items:center;justify-content:center;}
+	.ms365cal-modal-close{position:absolute;top:12px;right:12px;width:32px;height:32px;border:none;border-radius:50%;background:rgba(120,120,125,.14);cursor:pointer;font-size:14px;color:inherit;text-transform:none;letter-spacing:normal;display:flex;align-items:center;justify-content:center;}
 	.ms365cal-modal-close:hover{background:rgba(120,120,125,.28);}
 	.ms365cal-modal-cat{display:inline-block;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;margin-bottom:10px;}
 	.ms365cal-modal-title{margin:0 0 10px;font-size:18px;line-height:1.35;padding-right:24px;}
