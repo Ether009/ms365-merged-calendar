@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.19.1
+ * Version:           2.20.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2535,7 +2535,8 @@ function ms365cal_assets() {
 	.ms365cal-tl-hdate{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;margin-top:2px;font-size:15px;font-weight:600;}
 	.ms365cal-tl-allday{display:flex;padding:4px 0;border-bottom:1px solid var(--ms-line);}
 	.ms365cal-tl-allday-cell{flex:1;padding:0 2px;display:flex;flex-direction:column;gap:2px;min-width:0;}
-	.ms365cal-tl-chip{font-size:11px;padding:2px 6px;border-radius:4px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	.ms365cal-tl-chip{display:block;width:100%;border:none;font:inherit;text-align:left;cursor:pointer;font-size:11px;padding:2px 6px;border-radius:4px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	.ms365cal-tl-chip:hover,.ms365cal-tl-chip:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
 	.ms365cal-tl-body{display:flex;max-height:560px;overflow-y:auto;}
 	.ms365cal-tl-axis{flex:0 0 42px;}
 	.ms365cal-tl-hour{height:48px;box-sizing:border-box;border-top:1px solid var(--ms-line);font-size:10.5px;opacity:.5;text-align:right;padding-right:6px;transform:translateY(-6px);}
@@ -2543,7 +2544,8 @@ function ms365cal_assets() {
 	.ms365cal-tl-grid{flex:1;display:flex;position:relative;}
 	.ms365cal-tl-daycol{flex:1;position:relative;min-width:0;border-left:1px solid var(--ms-line);background-image:repeating-linear-gradient(to bottom,transparent,transparent 47px,var(--ms-line) 47px,var(--ms-line) 48px);}
 	.ms365cal-tl-daycol.is-today{background-color:var(--ms-soft);}
-	.ms365cal-tl-event{position:absolute;box-sizing:border-box;border-radius:4px;padding:2px 5px;font-size:11px;line-height:1.3;color:#fff;overflow:hidden;}
+	.ms365cal-tl-event{display:block;border:none;font:inherit;text-align:left;cursor:pointer;position:absolute;box-sizing:border-box;border-radius:4px;padding:2px 5px;font-size:11px;line-height:1.3;color:#fff;overflow:hidden;}
+	.ms365cal-tl-event:hover,.ms365cal-tl-event:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
 	.ms365cal-tl-ev-time{font-weight:700;opacity:.85;}
 	/* Calendar mode: Month grid (read-only — no drill-down yet). */
 	.ms365cal-month-head{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:2px;}
@@ -2553,8 +2555,19 @@ function ms365cal_assets() {
 	.ms365cal-month-cell.is-outside{opacity:.4;}
 	.ms365cal-month-daynum{display:inline-block;min-width:20px;text-align:center;font-size:12px;font-weight:600;margin-bottom:3px;}
 	.ms365cal-month-cell.is-today .ms365cal-month-daynum{background:var(--ms-line);border-radius:50%;}
-	.ms365cal-month-chip{font-size:10.5px;padding:1px 5px;border-radius:3px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px;}
+	.ms365cal-month-chip{display:block;width:100%;border:none;font:inherit;text-align:left;cursor:pointer;font-size:10.5px;padding:1px 5px;border-radius:3px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px;}
+	.ms365cal-month-chip:hover,.ms365cal-month-chip:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
 	.ms365cal-month-more{font-size:10px;opacity:.6;}
+	/* Calendar mode: event-detail popup, opened by clicking a timeline event or a Month/all-day chip — those are small colour blocks with no room for List's inline accordion. A solid background is unavoidable here (unlike the rest of this plugin, which stays transparent to blend with the host theme) since a popup has to stay legible over arbitrary page content behind it; Canvas/CanvasText are the dark-mode-aware system colours for "page background/text", with a plain #fff/#1d2327 fallback for browsers that don't support them. */
+	.ms365cal-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;}
+	.ms365cal-modal{position:relative;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;background:#fff;background:Canvas;color:#1d2327;color:CanvasText;border-radius:12px;padding:28px 24px 24px;box-shadow:0 12px 40px rgba(0,0,0,.3);}
+	.ms365cal-modal-close{position:absolute;top:12px;right:12px;width:32px;height:32px;border:none;border-radius:50%;background:rgba(120,120,125,.14);cursor:pointer;font-size:14px;color:inherit;display:flex;align-items:center;justify-content:center;}
+	.ms365cal-modal-close:hover{background:rgba(120,120,125,.28);}
+	.ms365cal-modal-cat{display:inline-block;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;margin-bottom:10px;}
+	.ms365cal-modal-title{margin:0 0 10px;font-size:18px;line-height:1.35;padding-right:24px;}
+	.ms365cal-modal-row{font-size:13px;opacity:.75;margin-bottom:4px;}
+	.ms365cal-modal-recur{opacity:.6;}
+	.ms365cal-modal-detail{margin-top:14px;font-size:13.5px;line-height:1.6;}
 	</style>
 	<script>
 	(function(){
@@ -2749,6 +2762,8 @@ function ms365cal_assets() {
 		var MAX_THROTTLE_RETRIES = 3;
 		var openDetail = null;
 		var autoAdvanceChecked = false;                   // only skip an empty first week once
+		var calEvents = [];                               // events currently rendered in Calendar mode, for click-to-lookup by data-idx
+		var currentModal = null;                          // the open event-detail popup, if any
 
 		function winKey(){return iso(start)+'|'+days;}
 		function updateRange(){
@@ -2786,6 +2801,65 @@ function ms365cal_assets() {
 				b.addEventListener('click',function(){enabled[slug]=!enabled[slug];b.classList.toggle('is-on');paint();});
 				chipsEl.appendChild(b);
 			});
+		}
+
+		// Shared between List mode's accordion and the Calendar-mode popup: the
+		// join-link/online/Outlook-link lines plus the body itself if already in
+		// hand (eager mode). In lazy mode e.body is '' here — the body arrives
+		// later via loadBody(), which inserts it into whatever container holds
+		// this HTML, so those synchronous links still need to render up front
+		// rather than waiting on the fetch.
+		function buildDetailHtml(e){
+			var d='';
+			if(e.body)d+='<div class="ms365cal-desc">'+e.body+'</div>';
+			if(e.joinUrl)d+='<div><a href="'+esc(e.joinUrl)+'" target="_blank" rel="noopener">Anslut till onlinemöte</a></div>';
+			else if(e.online)d+='<div>Onlinemöte</div>';
+			if(cfg.showOutlook&&e.link)d+='<div><a href="'+esc(e.link)+'" target="_blank" rel="noopener">Öppna i Outlook ↗</a></div>';
+			return d;
+		}
+
+		function closeEventModal(){
+			if(!currentModal)return;
+			currentModal.remove();
+			currentModal=null;
+			document.removeEventListener('keydown',modalKeyHandler);
+		}
+		function modalKeyHandler(ev){
+			if(ev.key==='Escape')closeEventModal();
+		}
+		// The calendar-grid views (Day/Week/Month) show events as small colour
+		// blocks/chips with no room for a body — clicking one opens this instead
+		// of the List view's inline accordion, reusing buildDetailHtml()/loadBody()
+		// so lazy-body fetching works identically either way.
+		function openEventModal(e){
+			closeEventModal();
+			var m=cfg.meta[e.cal];if(!m)return;
+			var locText=e.location?e.location:(e.online?'Online':'');
+			var recurShort=e.recur?e.recur.replace(/^Upprepas\s+/,''):'';
+			var metaHtml='';
+			if(e.when)metaHtml+='<div class="ms365cal-modal-row">'+esc(e.when)+'</div>';
+			if(locText)metaHtml+='<div class="ms365cal-modal-row">'+esc(locText)+'</div>';
+			if(e.recur)metaHtml+='<div class="ms365cal-modal-row ms365cal-modal-recur" title="'+escAttr(e.recur)+'">↻ '+esc(recurShort)+'</div>';
+
+			var lazyOk=cfg.lazyBody&&e.id&&e.hasBody;
+			var lazyAttrs=lazyOk?' data-cal="'+escAttr(e.cal)+'" data-id="'+escAttr(e.id)+'" data-loaded="0"':'';
+
+			var backdrop=document.createElement('div');
+			backdrop.className='ms365cal-modal-backdrop';
+			backdrop.innerHTML='<div class="ms365cal-modal" role="dialog" aria-modal="true">'
+				+'<button type="button" class="ms365cal-modal-close" aria-label="Stäng">✕</button>'
+				+'<span class="ms365cal-modal-cat" style="color:'+m.text+';background:'+m.supplement+'">'+esc(m.label)+'</span>'
+				+'<h3 class="ms365cal-modal-title">'+esc(e.title)+'</h3>'
+				+metaHtml
+				+'<div class="ms365cal-detail ms365cal-modal-detail"'+lazyAttrs+'>'+buildDetailHtml(e)+'</div>'
+			+'</div>';
+			document.body.appendChild(backdrop);
+			currentModal=backdrop;
+			document.addEventListener('keydown',modalKeyHandler);
+			backdrop.addEventListener('click',function(ev){if(ev.target===backdrop)closeEventModal();});
+			backdrop.querySelector('.ms365cal-modal-close').addEventListener('click',closeEventModal);
+			backdrop.querySelector('.ms365cal-modal-close').focus();
+			if(lazyOk)loadBody(backdrop.querySelector('.ms365cal-modal-detail'));
 		}
 
 		function renderDays(list,showDayHeaders){
@@ -2829,11 +2903,7 @@ function ms365cal_assets() {
 				// the always-visible meta line above.
 				// e.body is server-sanitised HTML (wp_kses, see ms365cal_sanitize_event_html())
 				// — injected as markup, not escaped, so real links keep their anchor text.
-				var d='';
-				if(e.body)d+='<div class="ms365cal-desc">'+e.body+'</div>';
-				if(e.joinUrl)d+='<div><a href="'+esc(e.joinUrl)+'" target="_blank" rel="noopener">Anslut till onlinem\u00f6te</a></div>';
-				else if(e.online)d+='<div>Onlinem\u00f6te</div>';
-				if(cfg.showOutlook&&e.link)d+='<div><a href="'+esc(e.link)+'" target="_blank" rel="noopener">\u00d6ppna i Outlook \u2197</a></div>';
+				var d=buildDetailHtml(e);
 
 				// In lazy mode (cfg.lazyBody), e.hasBody comes from Graph's cheap
 				// bodyPreview field (see ms365cal_build_rows_from_page()) \u2014 known at
@@ -2916,6 +2986,7 @@ function ms365cal_assets() {
 		// dayKey/sort which can be pinned to today for display purposes). Colour
 		// only, no calendar label chip \u2014 see renderMonth() for the same choice.
 		function renderTimeline(events,numDays){
+			calEvents=events;
 			var HOUR_PX=48;
 			var dayCols=[];
 			for(var i=0;i<numDays;i++){
@@ -2985,7 +3056,7 @@ function ms365cal_assets() {
 					html+='<div class="ms365cal-tl-allday-cell">';
 					col.allDay.forEach(function(e){
 						var m=cfg.meta[e.cal];if(!m)return;
-						html+='<div class="ms365cal-tl-chip" style="background:'+m.primary+'" title="'+escAttr(e.title)+'">'+esc(e.title)+'</div>';
+						html+='<button type="button" class="ms365cal-tl-chip" style="background:'+m.primary+'" title="'+escAttr(e.title)+'" data-idx="'+events.indexOf(e)+'">'+esc(e.title)+'</button>';
 					});
 					html+='</div>';
 				});
@@ -3005,10 +3076,10 @@ function ms365cal_assets() {
 					var top=((startMin-rangeStartMin)/60)*HOUR_PX;
 					var height=Math.max(18,((endMin-startMin)/60)*HOUR_PX);
 					var widthPct=100/it.laneCount,leftPct=it.laneIndex*widthPct;
-					html+='<div class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:'+widthPct+'%;background:'+m.primary+'" title="'+escAttr(it.ev.title)+'">'
+					html+='<button type="button" class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:'+widthPct+'%;background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'">'
 						+'<span class="ms365cal-tl-ev-time">'+pad(it.start.getHours())+':'+pad(it.start.getMinutes())+'</span> '
 						+'<span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span>'
-					+'</div>';
+					+'</button>';
 				});
 				html+='</div>';
 			});
@@ -3020,6 +3091,7 @@ function ms365cal_assets() {
 		// event chips plus a "+N fler" overflow, same colour-only/no-label choice
 		// as the timeline views.
 		function renderMonth(events,numDays,ref){
+			calEvents=events;
 			var dayCols=[];
 			for(var i=0;i<numDays;i++){
 				var d=new Date(start);d.setDate(d.getDate()+i);
@@ -3057,7 +3129,7 @@ function ms365cal_assets() {
 					+'<span class="ms365cal-month-daynum">'+col.date.getDate()+'</span>';
 				col.events.slice(0,CAP).forEach(function(e){
 					var m=cfg.meta[e.cal];if(!m)return;
-					html+='<div class="ms365cal-month-chip" style="background:'+m.primary+'" title="'+escAttr(e.title)+'">'+esc(e.title)+'</div>';
+					html+='<button type="button" class="ms365cal-month-chip" style="background:'+m.primary+'" title="'+escAttr(e.title)+'" data-idx="'+events.indexOf(e)+'">'+esc(e.title)+'</button>';
 				});
 				if(col.events.length>CAP)html+='<div class="ms365cal-month-more">+'+(col.events.length-CAP)+' fler</div>';
 				html+='</div>';
@@ -3162,6 +3234,19 @@ function ms365cal_assets() {
 			}
 			detail.hidden=false;btn.setAttribute('aria-expanded','true');openDetail=detail;
 			if(detail.getAttribute('data-loaded')==='0')loadBody(detail);
+		});
+
+		// Calendar mode: clicking an event block/chip (Day/Week timeline, Month
+		// grid, or the all-day strip) opens the popup instead of an inline
+		// accordion — there's no room in a small colour block for List's expand-
+		// in-place treatment. data-idx indexes into calEvents, set fresh by
+		// renderTimeline()/renderMonth() on every paint().
+		listEl.addEventListener('click',function(ev){
+			var el=ev.target.closest('.ms365cal-tl-event,.ms365cal-tl-chip,.ms365cal-month-chip');
+			if(!el||!listEl.contains(el))return;
+			var idx=parseInt(el.getAttribute('data-idx'),10);
+			if(isNaN(idx)||!calEvents[idx])return;
+			openEventModal(calEvents[idx]);
 		});
 
 		function load(){
