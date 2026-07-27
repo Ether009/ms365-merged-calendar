@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.17.7
+ * Version:           2.17.8
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2440,6 +2440,8 @@ function ms365cal_assets() {
 	.ms365cal-page:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
 	.ms365cal-page:disabled{opacity:.25;cursor:default;background:transparent;box-shadow:none;}
 	.ms365cal-page:disabled:hover{background:transparent;box-shadow:none;transform:none;}
+	/* Explicit size/behaviour for the chevron, not left to the svg element's own width/height attributes — a host theme's own "svg{...}" reset (common for responsive-image handling) can silently override those attributes and collapse the icon to 0 width while height still renders, which is exactly what happened here without this rule. */
+	.ms365cal-page svg{display:block;width:18px;height:18px;flex:none;overflow:visible;}
 	.ms365cal-range{font-size:15px;font-weight:700;opacity:.9;min-width:200px;text-align:center;}
 	.ms365cal-list{position:relative;min-height:60px;}
 	.ms365cal-list.is-loading{opacity:.55;transition:opacity .15s;}
