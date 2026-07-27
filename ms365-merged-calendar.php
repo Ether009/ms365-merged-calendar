@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.21.2
+ * Version:           2.22.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2559,7 +2559,10 @@ function ms365cal_assets() {
 	.ms365cal-month-cell.is-today .ms365cal-month-daynum{background:var(--ms-line);border-radius:50%;}
 	.ms365cal-month-chip{display:block;width:100%;border:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;font-size:10.5px;padding:1px 5px;border-radius:3px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px;}
 	.ms365cal-month-chip:hover,.ms365cal-month-chip:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
-	.ms365cal-month-more{font-size:10px;opacity:.6;}
+	.ms365cal-month-more{display:block;width:100%;border:none;background:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;font-size:10px;opacity:.6;padding:0;color:inherit;}
+	.ms365cal-month-more:hover,.ms365cal-month-more:focus-visible{opacity:1;text-decoration:underline;}
+	.ms365cal-tl-more{position:absolute;right:2px;z-index:1000;width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:9px;font-weight:700;line-height:16px;padding:0;cursor:pointer;text-align:center;text-transform:none;letter-spacing:normal;}
+	.ms365cal-tl-more:hover,.ms365cal-tl-more:focus-visible{background:rgba(0,0,0,.75);outline:2px solid rgba(255,255,255,.6);outline-offset:1px;}
 	/* Calendar mode: event-detail popup, opened by clicking a timeline event or a Month/all-day chip — those are small colour blocks with no room for List's inline accordion. A solid background is unavoidable here (unlike the rest of this plugin, which stays transparent to blend with the host theme) since a popup has to stay legible over arbitrary page content behind it; Canvas/CanvasText are the dark-mode-aware system colours for "page background/text", with a plain #fff/#1d2327 fallback for browsers that don't support them. */
 	.ms365cal-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;}
 	.ms365cal-modal{position:relative;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;background:#fff;background:Canvas;color:#1d2327;color:CanvasText;border-radius:12px;padding:28px 24px 24px;box-shadow:0 12px 40px rgba(0,0,0,.3);}
@@ -2570,6 +2573,13 @@ function ms365cal_assets() {
 	.ms365cal-modal-row{font-size:13px;opacity:.75;margin-bottom:4px;}
 	.ms365cal-modal-recur{opacity:.6;}
 	.ms365cal-modal-detail{margin-top:14px;font-size:13.5px;line-height:1.6;}
+	.ms365cal-modal-list-body{display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow-y:auto;}
+	.ms365cal-modal-list-item{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--ms-line);border-radius:8px;background:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;color:inherit;}
+	.ms365cal-modal-list-item:hover,.ms365cal-modal-list-item:focus-visible{background:var(--ms-soft);outline:2px solid rgba(0,0,0,.15);outline-offset:-2px;}
+	.ms365cal-modal-list-dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto;}
+	.ms365cal-modal-list-text{display:flex;flex-direction:column;gap:2px;min-width:0;}
+	.ms365cal-modal-list-title{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	.ms365cal-modal-list-when{font-size:12px;opacity:.65;}
 	</style>
 	<script>
 	(function(){
@@ -2765,6 +2775,7 @@ function ms365cal_assets() {
 		var openDetail = null;
 		var autoAdvanceChecked = false;                   // only skip an empty first week once
 		var calEvents = [];                               // events currently rendered in Calendar mode, for click-to-lookup by data-idx
+		var clusterGroups = [];                           // groups of events behind a "+N" overflow badge, for click-to-lookup by data-cluster-idx
 		var currentModal = null;                          // the open event-detail popup, if any
 
 		function winKey(){return iso(start)+'|'+days;}
@@ -2864,6 +2875,43 @@ function ms365cal_assets() {
 			if(lazyOk)loadBody(backdrop.querySelector('.ms365cal-modal-detail'));
 		}
 
+		// A "+N" overflow badge (Month's "+N fler", or a cascaded timeline cluster)
+		// opens this instead of jumping straight to one event's detail — a small
+		// pick list, since which specific event the user meant isn't known yet. Picking
+		// a row opens that event's own detail via openEventModal(), same as clicking
+		// it directly would if it weren't covered/overflowed in the first place.
+		function openEventListModal(events){
+			closeEventModal();
+			var rows='';
+			events.forEach(function(e,i){
+				var m=cfg.meta[e.cal];if(!m)return;
+				var whenHtml=e.when?'<span class="ms365cal-modal-list-when">'+esc(e.when)+'</span>':'';
+				rows+='<button type="button" class="ms365cal-modal-list-item" data-ev-idx="'+i+'">'
+					+'<span class="ms365cal-modal-list-dot" style="background:'+m.primary+'"></span>'
+					+'<span class="ms365cal-modal-list-text"><span class="ms365cal-modal-list-title">'+esc(e.title)+'</span>'+whenHtml+'</span>'
+				+'</button>';
+			});
+			var backdrop=document.createElement('div');
+			backdrop.className='ms365cal-modal-backdrop';
+			backdrop.innerHTML='<div class="ms365cal-modal" role="dialog" aria-modal="true">'
+				+'<button type="button" class="ms365cal-modal-close" aria-label="Stäng">✕</button>'
+				+'<h3 class="ms365cal-modal-title">'+events.length+' händelser</h3>'
+				+'<div class="ms365cal-modal-list-body">'+rows+'</div>'
+			+'</div>';
+			document.body.appendChild(backdrop);
+			currentModal=backdrop;
+			document.addEventListener('keydown',modalKeyHandler);
+			backdrop.addEventListener('click',function(ev){if(ev.target===backdrop)closeEventModal();});
+			backdrop.querySelector('.ms365cal-modal-close').addEventListener('click',closeEventModal);
+			backdrop.querySelector('.ms365cal-modal-close').focus();
+			backdrop.querySelectorAll('.ms365cal-modal-list-item').forEach(function(btn){
+				btn.addEventListener('click',function(){
+					var idx=parseInt(btn.getAttribute('data-ev-idx'),10);
+					if(!isNaN(idx)&&events[idx])openEventModal(events[idx]);
+				});
+			});
+		}
+
 		function renderDays(list,showDayHeaders){
 			if(showDayHeaders===undefined)showDayHeaders=true;
 			var html='',lastDay='';
@@ -2958,7 +3006,11 @@ function ms365cal_assets() {
 		// turns laneIndex/laneCount into a cascade \u2014 not an equal width split, which
 		// on a busy day with many overlapping calendars shrank lanes to unreadable
 		// slivers \u2014 each lane offsetting right by CASCADE_STEP_PCT and layering on top
-		// of the previous ones, capped at CASCADE_MAX_STEP lanes deep.
+		// of the previous ones, capped at CASCADE_MAX_STEP lanes deep. Every item in a
+		// cluster also gets clusterMembers (the full cluster's items), so the topmost
+		// lane can offer a "+N" overflow badge \u2014 a guaranteed, tap-friendly way to
+		// reach every event in the stack regardless of how deep the cascade covers
+		// them, since hover-to-reveal has no equivalent on touch devices.
 		var CASCADE_STEP_PCT=14,CASCADE_MAX_STEP=6;
 		function layoutLanes(items){
 			items.sort(function(a,b){return a.start-b.start;});
@@ -2980,7 +3032,8 @@ function ms365cal_assets() {
 					else lanesEnd[laneIdx]=it.end;
 					it.laneIndex=laneIdx;
 				}
-				for(var k2=i;k2<j;k2++)items[k2].laneCount=lanesEnd.length;
+				var clusterMembers=items.slice(i,j);
+				for(var k2=i;k2<j;k2++){items[k2].laneCount=lanesEnd.length;items[k2].clusterMembers=clusterMembers;}
 				i=j;
 			}
 		}
@@ -2991,6 +3044,7 @@ function ms365cal_assets() {
 		// only, no calendar label chip \u2014 see renderMonth() for the same choice.
 		function renderTimeline(events,numDays){
 			calEvents=events;
+			clusterGroups=[];
 			var HOUR_PX=48;
 			var dayCols=[];
 			for(var i=0;i<numDays;i++){
@@ -3081,6 +3135,15 @@ function ms365cal_assets() {
 					var height=Math.max(18,((endMin-startMin)/60)*HOUR_PX);
 					var stepIdx=Math.min(it.laneIndex,CASCADE_MAX_STEP),leftPct=stepIdx*CASCADE_STEP_PCT;
 					html+='<button type="button" class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+';background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'"><span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span></button>';
+					// The topmost (fully visible) lane of an overlapping cluster gets a
+					// small "+N" badge — a guaranteed, tap-friendly way to reach every
+					// event stacked underneath, since a covered event may receive zero
+					// pointer events at all once another lane is drawn fully on top of it.
+					if(it.laneCount>1&&it.laneIndex===it.laneCount-1){
+						var cidx=clusterGroups.length;
+						clusterGroups.push(it.clusterMembers.map(function(x){return x.ev;}));
+						html+='<button type="button" class="ms365cal-tl-more" style="top:'+top+'px;" data-cluster-idx="'+cidx+'" aria-label="'+it.clusterMembers.length+' händelser i denna period">'+it.clusterMembers.length+'</button>';
+					}
 				});
 				html+='</div>';
 			});
@@ -3088,11 +3151,13 @@ function ms365cal_assets() {
 			listEl.innerHTML=html;
 		}
 
-		// Month: a read-only grid (no drill-down yet) \u2014 each cell capped at a few
-		// event chips plus a "+N fler" overflow, same colour-only/no-label choice
-		// as the timeline views.
+		// Month: each cell capped at a few event chips plus a "+N fler" overflow
+		// button (clicking it lists just the overflow \u2014 the capped chips are already
+		// directly clickable) \u2014 same colour-only/no-label choice as the timeline
+		// views. Still no click-through from an empty cell to Day view for that date.
 		function renderMonth(events,numDays,ref){
 			calEvents=events;
+			clusterGroups=[];
 			var dayCols=[];
 			for(var i=0;i<numDays;i++){
 				var d=new Date(start);d.setDate(d.getDate()+i);
@@ -3132,7 +3197,11 @@ function ms365cal_assets() {
 					var m=cfg.meta[e.cal];if(!m)return;
 					html+='<button type="button" class="ms365cal-month-chip" style="background:'+m.primary+'" title="'+escAttr(e.title)+'" data-idx="'+events.indexOf(e)+'">'+esc(e.title)+'</button>';
 				});
-				if(col.events.length>CAP)html+='<div class="ms365cal-month-more">+'+(col.events.length-CAP)+' fler</div>';
+				if(col.events.length>CAP){
+					var cidx=clusterGroups.length;
+					clusterGroups.push(col.events.slice(CAP));
+					html+='<button type="button" class="ms365cal-month-more" data-cluster-idx="'+cidx+'">+'+(col.events.length-CAP)+' fler</button>';
+				}
 				html+='</div>';
 			});
 			html+='</div></div>';
@@ -3241,8 +3310,17 @@ function ms365cal_assets() {
 		// grid, or the all-day strip) opens the popup instead of an inline
 		// accordion — there's no room in a small colour block for List's expand-
 		// in-place treatment. data-idx indexes into calEvents, set fresh by
-		// renderTimeline()/renderMonth() on every paint().
+		// renderTimeline()/renderMonth() on every paint(). A "+N" overflow badge
+		// (data-cluster-idx into clusterGroups) opens the pick-list modal instead —
+		// checked first since it's a plain sibling of the events it overflows, not a
+		// descendant, so there's no risk of it also matching the event selector.
 		listEl.addEventListener('click',function(ev){
+			var moreEl=ev.target.closest('.ms365cal-tl-more,.ms365cal-month-more');
+			if(moreEl&&listEl.contains(moreEl)){
+				var cidx=parseInt(moreEl.getAttribute('data-cluster-idx'),10);
+				if(!isNaN(cidx)&&clusterGroups[cidx])openEventListModal(clusterGroups[cidx]);
+				return;
+			}
 			var el=ev.target.closest('.ms365cal-tl-event,.ms365cal-tl-chip,.ms365cal-month-chip');
 			if(!el||!listEl.contains(el))return;
 			var idx=parseInt(el.getAttribute('data-idx'),10);
