@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.18.2
+ * Version:           2.19.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2411,6 +2411,8 @@ function ms365cal_shortcode( $atts ) {
 		</div>
 		<div class="ms365cal-layout-switch" role="group" aria-label="Vy" data-for-mode="calendar" hidden>
 			<button type="button" class="ms365cal-layout-btn" data-calview="day">Dag</button>
+			<button type="button" class="ms365cal-layout-btn" data-calview="3day">3 dagar</button>
+			<button type="button" class="ms365cal-layout-btn" data-calview="workweek">Arbetsvecka</button>
 			<button type="button" class="ms365cal-layout-btn" data-calview="week">Vecka</button>
 			<button type="button" class="ms365cal-layout-btn" data-calview="month">Månad</button>
 		</div>
@@ -2452,7 +2454,7 @@ function ms365cal_assets() {
 	.ms365cal-mode-btn{font-size:13px;padding:7px 16px;background:transparent;border:none;border-radius:999px;cursor:pointer;color:inherit;opacity:.55;font-weight:700;transition:opacity .15s,background .15s;}
 	.ms365cal-mode-btn:hover{opacity:.85;}
 	.ms365cal-mode-btn.is-active{opacity:1;background:var(--ms-line);}
-	.ms365cal-layout-switch{display:flex;justify-content:flex-end;gap:4px;padding-top:6px;margin-bottom:10px;}
+	.ms365cal-layout-switch{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;padding-top:6px;margin-bottom:10px;}
 	.ms365cal-layout-switch[hidden]{display:none;}
 	.ms365cal-layout-btn{font-size:11px;padding:4px 10px;background:transparent;border:1px solid transparent;border-radius:6px;cursor:pointer;color:inherit;opacity:.5;font-weight:500;transition:opacity .15s,background .15s,border-color .15s;}
 	.ms365cal-layout-btn:hover{opacity:.85;background:var(--ms-soft);}
@@ -2624,7 +2626,7 @@ function ms365cal_assets() {
 			if(savedMode==='list'||savedMode==='calendar')mode=savedMode;
 			if(mode==='list'){
 				if(savedStyle==='standard'||savedStyle==='compact'||savedStyle==='expanded')layout=savedStyle;
-			}else if(savedStyle==='day'||savedStyle==='week'){
+			}else if(savedStyle==='day'||savedStyle==='3day'||savedStyle==='workweek'||savedStyle==='week'){
 				calView=savedStyle;
 			}
 		})();
@@ -2638,6 +2640,12 @@ function ms365cal_assets() {
 			if(mode==='calendar'&&calView==='day'){
 				return {start:new Date(refDate.getFullYear(),refDate.getMonth(),refDate.getDate()),days:1};
 			}
+			if(mode==='calendar'&&calView==='3day'){
+				return {start:new Date(refDate.getFullYear(),refDate.getMonth(),refDate.getDate()),days:3};
+			}
+			if(mode==='calendar'&&calView==='workweek'){
+				return {start:weekStart(refDate),days:5}; // Mon–Fri of the week
+			}
 			if(mode==='calendar'&&calView==='month'){
 				var first=new Date(refDate.getFullYear(),refDate.getMonth(),1);
 				var last=new Date(refDate.getFullYear(),refDate.getMonth()+1,0);
@@ -2649,9 +2657,9 @@ function ms365cal_assets() {
 		}
 		function computeMinStart(){
 			if(floorOverride)return floorOverride;
-			if(mode==='calendar'&&calView==='day')return new Date(today.getFullYear(),today.getMonth(),today.getDate());
+			if(mode==='calendar'&&(calView==='day'||calView==='3day'))return new Date(today.getFullYear(),today.getMonth(),today.getDate());
 			if(mode==='calendar'&&calView==='month')return weekStart(new Date(today.getFullYear(),today.getMonth(),1));
-			return weekStart(today);
+			return weekStart(today); // list, week, workweek
 		}
 		function recomputeWindow(){
 			var w=computeWindow();
@@ -2660,7 +2668,13 @@ function ms365cal_assets() {
 		recomputeWindow();
 
 		function updateNavLabels(){
-			var unit=(mode==='calendar'&&calView==='day')?'dag':(mode==='calendar'&&calView==='month')?'månad':'vecka';
+			var unit='vecka';
+			if(mode==='calendar'){
+				if(calView==='day')unit='dag';
+				else if(calView==='3day')unit='3 dagar';
+				else if(calView==='workweek')unit='arbetsvecka';
+				else if(calView==='month')unit='månad';
+			}
 			var prevBtn=root.querySelector('.ms365cal-page[data-dir="-1"]');
 			var nextBtn=root.querySelector('.ms365cal-page[data-dir="1"]');
 			if(prevBtn)prevBtn.setAttribute('aria-label','Föregående '+unit);
@@ -2736,10 +2750,15 @@ function ms365cal_assets() {
 		function updateRange(){
 			if(mode==='calendar'&&calView==='day'){
 				rangeEl.textContent=start.toLocaleDateString('sv-SE',{weekday:'long',day:'numeric',month:'long'});
+			}else if(mode==='calendar'&&calView==='3day'){
+				var end3=new Date(start);end3.setDate(end3.getDate()+days-1);
+				rangeEl.textContent=fmt(start)+' \u2013 '+fmt(end3);
 			}else if(mode==='calendar'&&calView==='month'&&monthRef){
 				var label=monthRef.toLocaleDateString('sv-SE',{month:'long',year:'numeric'});
 				rangeEl.textContent=label.charAt(0).toUpperCase()+label.slice(1);
 			}else{
+				// Week (List or Calendar), and Workweek \u2014 a specific ISO week either way,
+				// just fewer days shown for Workweek (Mon\u2013Fri instead of Mon\u2013Sun).
 				var end=new Date(start);end.setDate(end.getDate()+days-1);
 				rangeEl.textContent='Vecka '+isoWeek(start)+' \u00b7 '+fmt(start)+' \u2013 '+fmt(end);
 			}
@@ -3228,9 +3247,12 @@ function ms365cal_assets() {
 		function stepRef(dir){
 			if(mode==='calendar'&&calView==='day'){
 				refDate=new Date(refDate.getFullYear(),refDate.getMonth(),refDate.getDate()+dir);
+			}else if(mode==='calendar'&&calView==='3day'){
+				refDate=new Date(refDate.getFullYear(),refDate.getMonth(),refDate.getDate()+dir*3);
 			}else if(mode==='calendar'&&calView==='month'){
 				refDate=new Date(refDate.getFullYear(),refDate.getMonth()+dir,1);
 			}else{
+				// Week (List or Calendar) and Workweek both page by a whole week.
 				refDate=new Date(refDate.getFullYear(),refDate.getMonth(),refDate.getDate()+dir*7);
 			}
 		}
