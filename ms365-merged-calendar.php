@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.17.3
+ * Version:           2.17.4
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2483,15 +2483,17 @@ function ms365cal_assets() {
 	.ms365cal-layout-compact .ms365cal-row{padding:0 10px;}
 	.ms365cal-layout-compact .ms365cal-times{flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;width:200px;flex:0 0 200px;overflow:hidden;gap:6px;text-align:left;padding:4px 0;font-size:11px;}
 	.ms365cal-layout-compact .ms365cal-t1,.ms365cal-layout-compact .ms365cal-t2{flex:0 0 auto;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-	.ms365cal-layout-compact .ms365cal-cat{flex:1 1 auto;min-width:0;padding:1px 6px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-	.ms365cal-layout-compact .ms365cal-rail{margin:4px 0;}
+	.ms365cal-layout-compact .ms365cal-cat{flex:0 1 auto;max-width:50px;min-width:0;padding:1px 6px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	/* No margin, no rounding: the rail fills the row's full height edge-to-edge, and with zero gap between rows already, adjacent rails butt straight up against each other — reads as one continuous line that changes colour, not a row of separate pills. */
+	.ms365cal-layout-compact .ms365cal-rail{margin:0;border-radius:0;}
 	.ms365cal-layout-compact .ms365cal-hbody{padding:4px 0;}
 	.ms365cal-layout-compact .ms365cal-line{display:flex;flex-wrap:nowrap;align-items:baseline;gap:8px;min-width:0;}
 	.ms365cal-layout-compact .ms365cal-ev,.ms365cal-layout-compact .ms365cal-ev-static{flex:1 1 auto;min-width:0;width:auto;}
 	.ms365cal-layout-compact .ms365cal-title{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 	.ms365cal-layout-compact .ms365cal-meta-line{flex:0 0 auto;margin-top:0;padding-top:0;white-space:nowrap;}
 	.ms365cal-layout-compact .ms365cal-loc-line{max-width:150px;}
-	.ms365cal-layout-compact .ms365cal-recur-line{cursor:default;}
+	/* Fixed width whether or not there's actually a pattern to show (see the JS: a recurrence-less row still gets an empty span here) — otherwise the location's start position would shift depending on whether a neighbouring row happened to have a recurrence icon or not. */
+	.ms365cal-layout-compact .ms365cal-recur-line{display:inline-block;width:14px;flex:0 0 auto;text-align:center;cursor:default;}
 	.ms365cal-layout-compact .ms365cal-detail{margin-top:2px;}
 	/* Expanded layout: an always-visible body snippet under the title. */
 	.ms365cal-layout-expanded .ms365cal-hbody{padding:12px 0;}
@@ -2618,10 +2620,20 @@ function ms365cal_assets() {
 
 				// Compact only: the recurrence pattern text is dropped to just the icon
 				// (full pattern still available on hover via title=) so the line has room
-				// to stay a single line instead of wrapping.
+				// to stay a single line instead of wrapping. Whenever there's a location,
+				// the recurrence slot is always present (empty span if there's no actual
+				// pattern) \u2014 a fixed-width CSS rule then keeps the location's start
+				// position identical whether or not that row happens to recur, instead of
+				// it shifting by however wide the icon would've been.
 				var compactBits='';
-				if(locText)compactBits+='<span class="ms365cal-loc-line">'+esc(locText)+'</span>';
-				if(e.recur)compactBits+='<span class="ms365cal-recur-line" title="'+escAttr(e.recur)+'">\u21bb</span>';
+				if(locText){
+					compactBits+='<span class="ms365cal-loc-line">'+esc(locText)+'</span>';
+					compactBits+=e.recur
+						?'<span class="ms365cal-recur-line" title="'+escAttr(e.recur)+'">\u21bb</span>'
+						:'<span class="ms365cal-recur-line" aria-hidden="true"></span>';
+				}else if(e.recur){
+					compactBits+='<span class="ms365cal-recur-line" title="'+escAttr(e.recur)+'">\u21bb</span>';
+				}
 				var compactMetaLine=compactBits?'<div class="ms365cal-meta-line">'+compactBits+'</div>':'';
 
 				// No "when" line here \u2014 the start/end times stay visible in the left
