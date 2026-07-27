@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.20.3
+ * Version:           2.21.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2544,8 +2544,8 @@ function ms365cal_assets() {
 	.ms365cal-tl-grid{flex:1;display:flex;position:relative;}
 	.ms365cal-tl-daycol{flex:1;position:relative;min-width:0;border-left:1px solid var(--ms-line);background-image:repeating-linear-gradient(to bottom,transparent,transparent 47px,var(--ms-line) 47px,var(--ms-line) 48px);}
 	.ms365cal-tl-daycol.is-today{background-color:var(--ms-soft);}
-	.ms365cal-tl-event{display:flex;align-items:flex-start;justify-content:flex-start;border:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;position:absolute;box-sizing:border-box;border-radius:4px;padding:2px 5px;font-size:11px;line-height:1.3;color:#fff;}
-	.ms365cal-tl-event:hover,.ms365cal-tl-event:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
+	.ms365cal-tl-event{display:flex;align-items:flex-start;justify-content:flex-start;border:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;position:absolute;box-sizing:border-box;border-radius:4px;padding:2px 5px;font-size:11px;line-height:1.3;color:#fff;box-shadow:-2px 0 3px rgba(0,0,0,.18);transition:box-shadow .12s;}
+	.ms365cal-tl-event:hover,.ms365cal-tl-event:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;z-index:999!important;width:auto!important;max-width:260px;box-shadow:0 4px 14px rgba(0,0,0,.35);}
 	.ms365cal-tl-ev-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
 	/* Calendar mode: Month grid (read-only — no drill-down yet). */
 	.ms365cal-month-head{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:2px;}
@@ -2949,13 +2949,15 @@ function ms365cal_assets() {
 			return html;
 		}
 
-		// Greedy lane layout for same-day timed events that overlap in time \u2014 the
-		// standard "Google Calendar day view" approach: sort by start, group into
-		// connected overlap-clusters (a gap with nothing active breaks the group),
-		// then within each cluster give each event the first lane whose previous
-		// occupant has already ended, else a new lane. Every event in a cluster
-		// shares that cluster's lane count, so its width is 1/laneCount \u2014 simple
-		// and correct, not tuned for pixel-optimal 3+-way overlaps.
+		// Greedy lane layout for same-day timed events that overlap in time: sort by
+		// start, group into connected overlap-clusters (a gap with nothing active
+		// breaks the group), then within each cluster give each event the first lane
+		// whose previous occupant has already ended, else a new lane. Rendering (below)
+		// turns laneIndex/laneCount into a cascade \u2014 not an equal width split, which
+		// on a busy day with many overlapping calendars shrank lanes to unreadable
+		// slivers \u2014 each lane offsetting right by CASCADE_STEP_PCT and layering on top
+		// of the previous ones, capped at CASCADE_MAX_STEP lanes deep.
+		var CASCADE_STEP_PCT=14,CASCADE_MAX_STEP=6;
 		function layoutLanes(items){
 			items.sort(function(a,b){return a.start-b.start;});
 			var i=0;
@@ -3075,8 +3077,8 @@ function ms365cal_assets() {
 					if(it.end.getDate()!==it.start.getDate()||endMin<=startMin)endMin=24*60;
 					var top=((startMin-rangeStartMin)/60)*HOUR_PX;
 					var height=Math.max(18,((endMin-startMin)/60)*HOUR_PX);
-					var widthPct=100/it.laneCount,leftPct=it.laneIndex*widthPct;
-					html+='<button type="button" class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:'+widthPct+'%;background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'"><span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span></button>';
+					var stepIdx=Math.min(it.laneIndex,CASCADE_MAX_STEP),leftPct=stepIdx*CASCADE_STEP_PCT;
+					html+='<button type="button" class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+';background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'"><span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span></button>';
 				});
 				html+='</div>';
 			});
