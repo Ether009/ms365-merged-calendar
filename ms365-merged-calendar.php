@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.19.0
+ * Version:           2.19.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2596,21 +2596,25 @@ function ms365cal_assets() {
 		var today    = new Date(cfg.startY, cfg.startM-1, cfg.startD); // today, site tz
 		var todayKey = iso(today);
 
-		// View preference (top-tier mode + its sub-style) persists site-wide via a
-		// cookie, not per-embed — it's a viewing preference, not calendar config.
-		// Migrated once from the old pre-Calendar-mode localStorage key so an
-		// existing visitor's List sub-style choice isn't silently reset. "Month" is
-		// deliberately never the persisted sub-style (see the click handler below)
-		// — a return visit should never silently re-fetch a whole month's worth of
-		// events just because that was the last thing clicked; it falls back to
-		// Week instead, and Month has to be asked for again each time.
+		// View preference (top-tier mode + its sub-style) persists per page — a
+		// cookie scoped to the current page's own path (not site-wide `path=/`), so
+		// e.g. one page embedding the calendar in Week and another in Day don't
+		// fight over a single shared preference; each page remembers its own last
+		// choice independently, same as if each had a separate embed config.
+		// Migrated once from the old pre-Calendar-mode localStorage key (which
+		// *was* site-wide) so an existing visitor's List sub-style choice isn't
+		// silently reset. "Month" is deliberately never the persisted sub-style
+		// (see the click handler below) — a return visit should never silently
+		// re-fetch a whole month's worth of events just because that was the last
+		// thing clicked; it falls back to Week instead, and Month has to be asked
+		// for again each time.
 		function getCookie(name){
 			var m=document.cookie.match('(?:^|; )'+name.replace(/([.$?*|{}()\[\]\\\/\+^])/g,'\\$1')+'=([^;]*)');
 			return m?decodeURIComponent(m[1]):null;
 		}
 		function setCookie(name,value){
 			var d=new Date();d.setTime(d.getTime()+365*86400000);
-			document.cookie=name+'='+encodeURIComponent(value)+';expires='+d.toUTCString()+';path=/;SameSite=Lax';
+			document.cookie=name+'='+encodeURIComponent(value)+';expires='+d.toUTCString()+';path='+location.pathname+';SameSite=Lax';
 		}
 		var MODE_COOKIE='ms365cal_mode',STYLE_COOKIE='ms365cal_style';
 		var mode='list',layout='standard',calView='week';
