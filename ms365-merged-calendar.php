@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.17.8
+ * Version:           2.18.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -745,6 +745,14 @@ function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $wi
 			'online'      => $is_online,
 			'joinUrl'     => isset( $e['onlineMeeting']['joinUrl'] ) ? $e['onlineMeeting']['joinUrl'] : '',
 			'link'        => isset( $e['webLink'] ) ? $e['webLink'] : '',
+			// Raw start/end (site-timezone-naive, same format as 'sort') and the
+			// all-day flag — 'sort'/'dayKey' are the *pinned* (carried-over/today-
+			// pinned) values used for list grouping, not necessarily the event's
+			// real timing, so the Day/Week calendar-grid views (which position
+			// events by actual clock time) need these instead.
+			'start'       => $st->format( 'Y-m-d\TH:i:s' ),
+			'end'         => $en ? $en->format( 'Y-m-d\TH:i:s' ) : null,
+			'allDay'      => $allday,
 		);
 		if ( $show_recur && '' !== $master_id ) {
 			$row['_master'] = $master_id; // temp key, stripped after resolution.
@@ -2391,10 +2399,20 @@ function ms365cal_shortcode( $atts ) {
 
 		<div class="ms365cal-chips"></div>
 
-		<div class="ms365cal-layout-switch" role="group" aria-label="Layout">
+		<div class="ms365cal-mode-switch" role="group" aria-label="Vytyp">
+			<button type="button" class="ms365cal-mode-btn" data-mode="list">Lista</button>
+			<button type="button" class="ms365cal-mode-btn" data-mode="calendar">Kalender</button>
+		</div>
+
+		<div class="ms365cal-layout-switch" role="group" aria-label="Layout" data-for-mode="list">
 			<button type="button" class="ms365cal-layout-btn" data-layout="standard">Standard</button>
 			<button type="button" class="ms365cal-layout-btn" data-layout="compact">Kompakt</button>
 			<button type="button" class="ms365cal-layout-btn" data-layout="expanded">Utökad</button>
+		</div>
+		<div class="ms365cal-layout-switch" role="group" aria-label="Vy" data-for-mode="calendar" hidden>
+			<button type="button" class="ms365cal-layout-btn" data-calview="day">Dag</button>
+			<button type="button" class="ms365cal-layout-btn" data-calview="week">Vecka</button>
+			<button type="button" class="ms365cal-layout-btn" data-calview="month">Månad</button>
 		</div>
 
 		<div class="ms365cal-nav">
@@ -2429,6 +2447,10 @@ function ms365cal_assets() {
 	.ms365cal-chip.is-on{border-color:var(--cc);background:var(--cbg);color:var(--ct);opacity:1;}
 	.ms365cal-dot{width:9px;height:9px;border-radius:50%;background:currentColor;opacity:.35;}
 	.ms365cal-chip.is-on .ms365cal-dot{background:var(--cc);opacity:1;}
+	.ms365cal-mode-switch{display:flex;justify-content:flex-end;gap:6px;margin-bottom:8px;}
+	.ms365cal-mode-btn{font-size:12.5px;padding:6px 14px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.6;font-weight:600;transition:opacity .15s,background .15s,border-color .15s;}
+	.ms365cal-mode-btn:hover{opacity:.9;background:var(--ms-soft);}
+	.ms365cal-mode-btn.is-active{opacity:1;border-color:currentColor;background:var(--ms-line);}
 	.ms365cal-layout-switch{display:flex;justify-content:flex-end;gap:6px;margin-bottom:10px;}
 	.ms365cal-layout-btn{font-size:12px;padding:5px 12px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.6;transition:opacity .15s,background .15s,border-color .15s;}
 	.ms365cal-layout-btn:hover{opacity:.9;background:var(--ms-soft);}
@@ -2500,6 +2522,35 @@ function ms365cal_assets() {
 	.ms365cal-layout-compact .ms365cal-detail{margin-top:2px;}
 	/* Expanded layout: an always-visible body snippet under the title. */
 	.ms365cal-layout-expanded .ms365cal-hbody{padding:12px 0;}
+	/* Calendar mode: Day/Week timeline. */
+	.ms365cal-tl-header{display:flex;}
+	.ms365cal-tl-axis-spacer{flex:0 0 42px;}
+	.ms365cal-tl-hcell{flex:1;text-align:center;padding:4px 2px 8px;}
+	.ms365cal-tl-hcell.is-today .ms365cal-tl-hdate{background:var(--ms-line);border-radius:50%;}
+	.ms365cal-tl-hday{display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;opacity:.55;}
+	.ms365cal-tl-hdate{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;margin-top:2px;font-size:15px;font-weight:600;}
+	.ms365cal-tl-allday{display:flex;padding:4px 0;border-bottom:1px solid var(--ms-line);}
+	.ms365cal-tl-allday-cell{flex:1;padding:0 2px;display:flex;flex-direction:column;gap:2px;min-width:0;}
+	.ms365cal-tl-chip{font-size:11px;padding:2px 6px;border-radius:4px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	.ms365cal-tl-body{display:flex;max-height:560px;overflow-y:auto;}
+	.ms365cal-tl-axis{flex:0 0 42px;}
+	.ms365cal-tl-hour{height:48px;box-sizing:border-box;border-top:1px solid var(--ms-line);font-size:10.5px;opacity:.5;text-align:right;padding-right:6px;transform:translateY(-6px);}
+	.ms365cal-tl-hour:first-child{border-top:0;}
+	.ms365cal-tl-grid{flex:1;display:flex;position:relative;}
+	.ms365cal-tl-daycol{flex:1;position:relative;min-width:0;border-left:1px solid var(--ms-line);background-image:repeating-linear-gradient(to bottom,transparent,transparent 47px,var(--ms-line) 47px,var(--ms-line) 48px);}
+	.ms365cal-tl-daycol.is-today{background-color:var(--ms-soft);}
+	.ms365cal-tl-event{position:absolute;box-sizing:border-box;border-radius:4px;padding:2px 5px;font-size:11px;line-height:1.3;color:#fff;overflow:hidden;}
+	.ms365cal-tl-ev-time{font-weight:700;opacity:.85;}
+	/* Calendar mode: Month grid (read-only — no drill-down yet). */
+	.ms365cal-month-head{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:2px;}
+	.ms365cal-month-hcell{text-align:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;opacity:.55;padding:4px 0;}
+	.ms365cal-month-grid{display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:minmax(90px,auto);}
+	.ms365cal-month-cell{border:1px solid var(--ms-line);margin:-1px 0 0 -1px;padding:4px;box-sizing:border-box;overflow:hidden;}
+	.ms365cal-month-cell.is-outside{opacity:.4;}
+	.ms365cal-month-daynum{display:inline-block;min-width:20px;text-align:center;font-size:12px;font-weight:600;margin-bottom:3px;}
+	.ms365cal-month-cell.is-today .ms365cal-month-daynum{background:var(--ms-line);border-radius:50%;}
+	.ms365cal-month-chip{font-size:10.5px;padding:1px 5px;border-radius:3px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px;}
+	.ms365cal-month-more{font-size:10px;opacity:.6;}
 	</style>
 	<script>
 	(function(){
@@ -2536,41 +2587,142 @@ function ms365cal_assets() {
 		var enabled = {};
 		cfg.cals.forEach(function(s){enabled[s]=!!cfg.defaults[s];});
 
-		// Layout preference persists site-wide (same key for every embed on this
-		// browser), not per-embed — it's a viewing preference, not calendar config.
-		var LAYOUT_KEY='ms365cal_layout';
-		var layout='standard';
-		try{
-			var savedLayout=localStorage.getItem(LAYOUT_KEY);
-			if(savedLayout==='standard'||savedLayout==='compact'||savedLayout==='expanded')layout=savedLayout;
-		}catch(e){}
-		function applyLayout(){
-			root.classList.remove('ms365cal-layout-standard','ms365cal-layout-compact','ms365cal-layout-expanded');
-			root.classList.add('ms365cal-layout-'+layout);
-			root.querySelectorAll('.ms365cal-layout-btn').forEach(function(b){
-				b.classList.toggle('is-active',b.getAttribute('data-layout')===layout);
-			});
-		}
-		root.querySelectorAll('.ms365cal-layout-btn').forEach(function(b){
-			b.addEventListener('click',function(){
-				var next=b.getAttribute('data-layout');
-				if(next===layout)return;
-				layout=next;
-				try{localStorage.setItem(LAYOUT_KEY,layout);}catch(e){}
-				applyLayout();
-				paint(); // expanded needs the preview line (re)rendered
-			});
-		});
-		applyLayout();
-
-		var cache = {};                                   // window key -> events[]
 		// Monday of the week containing d (weeks start Monday).
 		function weekStart(d){var x=new Date(d.getFullYear(),d.getMonth(),d.getDate());x.setDate(x.getDate()-((x.getDay()+6)%7));return x;}
 		var today    = new Date(cfg.startY, cfg.startM-1, cfg.startD); // today, site tz
 		var todayKey = iso(today);
-		var start    = weekStart(today);
-		var minStart = weekStart(today);                  // current week is the earliest
-		var days  = 7;                                    // weekly window
+
+		// View preference (top-tier mode + its sub-style) persists site-wide via a
+		// cookie, not per-embed — it's a viewing preference, not calendar config.
+		// Migrated once from the old pre-Calendar-mode localStorage key so an
+		// existing visitor's List sub-style choice isn't silently reset. "Month" is
+		// deliberately never the persisted sub-style (see the click handler below)
+		// — a return visit should never silently re-fetch a whole month's worth of
+		// events just because that was the last thing clicked; it falls back to
+		// Week instead, and Month has to be asked for again each time.
+		function getCookie(name){
+			var m=document.cookie.match('(?:^|; )'+name.replace(/([.$?*|{}()\[\]\\\/\+^])/g,'\\$1')+'=([^;]*)');
+			return m?decodeURIComponent(m[1]):null;
+		}
+		function setCookie(name,value){
+			var d=new Date();d.setTime(d.getTime()+365*86400000);
+			document.cookie=name+'='+encodeURIComponent(value)+';expires='+d.toUTCString()+';path=/;SameSite=Lax';
+		}
+		var MODE_COOKIE='ms365cal_mode',STYLE_COOKIE='ms365cal_style';
+		var mode='list',layout='standard',calView='week';
+		(function(){
+			var savedMode=getCookie(MODE_COOKIE);
+			var savedStyle=getCookie(STYLE_COOKIE);
+			if(savedMode===null&&savedStyle===null){
+				try{
+					var old=localStorage.getItem('ms365cal_layout');
+					if(old==='standard'||old==='compact'||old==='expanded'){savedMode='list';savedStyle=old;}
+				}catch(e){}
+			}
+			if(savedMode==='list'||savedMode==='calendar')mode=savedMode;
+			if(mode==='list'){
+				if(savedStyle==='standard'||savedStyle==='compact'||savedStyle==='expanded')layout=savedStyle;
+			}else if(savedStyle==='day'||savedStyle==='week'){
+				calView=savedStyle;
+			}
+		})();
+
+		var refDate=new Date(today);   // anchor date the current window is derived from
+		var monthRef=null;             // first-of-month Date, set only while calView==='month'
+		var floorOverride=null;        // raised once by the empty-week auto-advance (list mode only)
+		var start,days;
+
+		function computeWindow(){
+			if(mode==='calendar'&&calView==='day'){
+				return {start:new Date(refDate.getFullYear(),refDate.getMonth(),refDate.getDate()),days:1};
+			}
+			if(mode==='calendar'&&calView==='month'){
+				var first=new Date(refDate.getFullYear(),refDate.getMonth(),1);
+				var last=new Date(refDate.getFullYear(),refDate.getMonth()+1,0);
+				var gridStart=weekStart(first);
+				var gridEndExcl=weekStart(last);gridEndExcl.setDate(gridEndExcl.getDate()+7);
+				return {start:gridStart,days:Math.round((gridEndExcl-gridStart)/86400000),monthRef:first};
+			}
+			return {start:weekStart(refDate),days:7}; // list mode, or calendar/week
+		}
+		function computeMinStart(){
+			if(floorOverride)return floorOverride;
+			if(mode==='calendar'&&calView==='day')return new Date(today.getFullYear(),today.getMonth(),today.getDate());
+			if(mode==='calendar'&&calView==='month')return weekStart(new Date(today.getFullYear(),today.getMonth(),1));
+			return weekStart(today);
+		}
+		function recomputeWindow(){
+			var w=computeWindow();
+			start=w.start;days=w.days;monthRef=w.monthRef||null;
+		}
+		recomputeWindow();
+
+		function updateNavLabels(){
+			var unit=(mode==='calendar'&&calView==='day')?'dag':(mode==='calendar'&&calView==='month')?'månad':'vecka';
+			var prevBtn=root.querySelector('.ms365cal-page[data-dir="-1"]');
+			var nextBtn=root.querySelector('.ms365cal-page[data-dir="1"]');
+			if(prevBtn)prevBtn.setAttribute('aria-label','Föregående '+unit);
+			if(nextBtn)nextBtn.setAttribute('aria-label','Nästa '+unit);
+		}
+		function applyView(){
+			root.classList.remove('ms365cal-layout-standard','ms365cal-layout-compact','ms365cal-layout-expanded','ms365cal-mode-list','ms365cal-mode-calendar');
+			root.classList.add('ms365cal-mode-'+mode);
+			if(mode==='list')root.classList.add('ms365cal-layout-'+layout);
+			root.querySelectorAll('.ms365cal-mode-btn').forEach(function(b){
+				b.classList.toggle('is-active',b.getAttribute('data-mode')===mode);
+			});
+			root.querySelectorAll('[data-for-mode]').forEach(function(g){
+				g.hidden=(g.getAttribute('data-for-mode')!==mode);
+			});
+			root.querySelectorAll('.ms365cal-layout-btn').forEach(function(b){
+				var isActive=mode==='list'?(b.getAttribute('data-layout')===layout):(b.getAttribute('data-calview')===calView);
+				b.classList.toggle('is-active',isActive);
+			});
+			updateNavLabels();
+		}
+		root.querySelectorAll('.ms365cal-mode-btn').forEach(function(b){
+			b.addEventListener('click',function(){
+				var next=b.getAttribute('data-mode');
+				if(next===mode)return;
+				mode=next;
+				setCookie(MODE_COOKIE,mode);
+				setCookie(STYLE_COOKIE,mode==='list'?layout:(calView==='month'?'week':calView));
+				floorOverride=null;
+				// Ground on today rather than carrying over wherever navigation had
+				// drifted to in the mode just left — e.g. paging Month forward a few
+				// months and then switching to List shouldn't land on some unrelated
+				// past week just because refDate was last normalised to a 1st-of-month.
+				refDate=new Date(today);
+				recomputeWindow();
+				applyView();
+				load();
+			});
+		});
+		root.querySelectorAll('.ms365cal-layout-btn').forEach(function(b){
+			b.addEventListener('click',function(){
+				if(mode==='list'){
+					var nextLayout=b.getAttribute('data-layout');
+					if(!nextLayout||nextLayout===layout)return;
+					layout=nextLayout;
+					setCookie(STYLE_COOKIE,layout);
+					applyView();
+					paint(); // expanded needs the preview line (re)rendered
+				}else{
+					var nextView=b.getAttribute('data-calview');
+					if(!nextView||nextView===calView)return;
+					calView=nextView;
+					// Not persisted when it's "month" — see the cookie note above.
+					if(calView!=='month')setCookie(STYLE_COOKIE,calView);
+					refDate=new Date(today); // same reasoning as the mode switch above
+					recomputeWindow();
+					applyView();
+					load();
+				}
+			});
+		});
+		applyView();
+
+		var cache = {};                                   // window key -> events[]
 		var reqId = 0;
 		var retryTimer = null;
 		var throttleRetries = 0;
@@ -2580,12 +2732,19 @@ function ms365cal_assets() {
 
 		function winKey(){return iso(start)+'|'+days;}
 		function updateRange(){
-			var end=new Date(start);end.setDate(end.getDate()+days-1);
-			rangeEl.textContent='Vecka '+isoWeek(start)+' \u00b7 '+fmt(start)+' \u2013 '+fmt(end);
+			if(mode==='calendar'&&calView==='day'){
+				rangeEl.textContent=start.toLocaleDateString('sv-SE',{weekday:'long',day:'numeric',month:'long'});
+			}else if(mode==='calendar'&&calView==='month'&&monthRef){
+				var label=monthRef.toLocaleDateString('sv-SE',{month:'long',year:'numeric'});
+				rangeEl.textContent=label.charAt(0).toUpperCase()+label.slice(1);
+			}else{
+				var end=new Date(start);end.setDate(end.getDate()+days-1);
+				rangeEl.textContent='Vecka '+isoWeek(start)+' \u00b7 '+fmt(start)+' \u2013 '+fmt(end);
+			}
 		}
 		function updateNav(){
 			var prev=root.querySelector('.ms365cal-page[data-dir="-1"]');
-			if(prev)prev.disabled=(start<=minStart);
+			if(prev)prev.disabled=(start<=computeMinStart());
 		}
 
 		function renderChips(){
@@ -2695,10 +2854,188 @@ function ms365cal_assets() {
 			return html;
 		}
 
+		// Greedy lane layout for same-day timed events that overlap in time \u2014 the
+		// standard "Google Calendar day view" approach: sort by start, group into
+		// connected overlap-clusters (a gap with nothing active breaks the group),
+		// then within each cluster give each event the first lane whose previous
+		// occupant has already ended, else a new lane. Every event in a cluster
+		// shares that cluster's lane count, so its width is 1/laneCount \u2014 simple
+		// and correct, not tuned for pixel-optimal 3+-way overlaps.
+		function layoutLanes(items){
+			items.sort(function(a,b){return a.start-b.start;});
+			var i=0;
+			while(i<items.length){
+				var groupEnd=items[i].end;
+				var j=i+1;
+				while(j<items.length&&items[j].start<groupEnd){
+					if(items[j].end>groupEnd)groupEnd=items[j].end;
+					j++;
+				}
+				var lanesEnd=[];
+				for(var k=i;k<j;k++){
+					var it=items[k],laneIdx=-1;
+					for(var li=0;li<lanesEnd.length;li++){
+						if(lanesEnd[li]<=it.start){laneIdx=li;break;}
+					}
+					if(laneIdx===-1){laneIdx=lanesEnd.length;lanesEnd.push(it.end);}
+					else lanesEnd[laneIdx]=it.end;
+					it.laneIndex=laneIdx;
+				}
+				for(var k2=i;k2<j;k2++)items[k2].laneCount=lanesEnd.length;
+				i=j;
+			}
+		}
+
+		// Day/Week: a vertical hour axis with events positioned/sized by actual
+		// clock time (row.start/row.end \u2014 the real timing, unlike the list view's
+		// dayKey/sort which can be pinned to today for display purposes). Colour
+		// only, no calendar label chip \u2014 see renderMonth() for the same choice.
+		function renderTimeline(events,numDays){
+			var HOUR_PX=48;
+			var dayCols=[];
+			for(var i=0;i<numDays;i++){
+				var d=new Date(start);d.setDate(d.getDate()+i);
+				dayCols.push({date:d,key:iso(d),timed:[],allDay:[]});
+			}
+			var colByKey={};dayCols.forEach(function(c){colByKey[c.key]=c;});
+			var winEnd=new Date(start);winEnd.setDate(winEnd.getDate()+numDays);
+
+			events.forEach(function(e){
+				if(!e.start)return;
+				var st=new Date(e.start);
+				var en=e.end?new Date(e.end):new Date(st.getTime()+30*60000);
+				if(e.allDay||iso(st)!==iso(en)){
+					var cursor=new Date(st<start?start:st);
+					var endClamped=new Date(en<winEnd?en:winEnd);
+					while(cursor<endClamped){
+						var key=iso(cursor);
+						if(colByKey[key])colByKey[key].allDay.push(e);
+						cursor.setDate(cursor.getDate()+1);
+					}
+					return;
+				}
+				var key2=iso(st);
+				if(colByKey[key2])colByKey[key2].timed.push({ev:e,start:st,end:en});
+			});
+			dayCols.forEach(function(col){layoutLanes(col.timed);});
+
+			var html='<div class="ms365cal-tl">';
+			html+='<div class="ms365cal-tl-header"><div class="ms365cal-tl-axis-spacer"></div>';
+			dayCols.forEach(function(col){
+				html+='<div class="ms365cal-tl-hcell'+(col.key===todayKey?' is-today':'')+'">'
+					+'<span class="ms365cal-tl-hday">'+esc(col.date.toLocaleDateString('sv-SE',{weekday:'short'}))+'</span>'
+					+'<span class="ms365cal-tl-hdate">'+col.date.getDate()+'</span>'
+				+'</div>';
+			});
+			html+='</div>';
+
+			if(dayCols.some(function(c){return c.allDay.length;})){
+				html+='<div class="ms365cal-tl-allday"><div class="ms365cal-tl-axis-spacer"></div>';
+				dayCols.forEach(function(col){
+					html+='<div class="ms365cal-tl-allday-cell">';
+					col.allDay.forEach(function(e){
+						var m=cfg.meta[e.cal];if(!m)return;
+						html+='<div class="ms365cal-tl-chip" style="background:'+m.primary+'" title="'+escAttr(e.title)+'">'+esc(e.title)+'</div>';
+					});
+					html+='</div>';
+				});
+				html+='</div>';
+			}
+
+			html+='<div class="ms365cal-tl-body"><div class="ms365cal-tl-axis">';
+			for(var h=0;h<24;h++)html+='<div class="ms365cal-tl-hour">'+pad(h)+':00</div>';
+			html+='</div><div class="ms365cal-tl-grid" style="height:'+(24*HOUR_PX)+'px">';
+			dayCols.forEach(function(col){
+				html+='<div class="ms365cal-tl-daycol'+(col.key===todayKey?' is-today':'')+'">';
+				col.timed.forEach(function(it){
+					var m=cfg.meta[it.ev.cal];if(!m)return;
+					var startMin=it.start.getHours()*60+it.start.getMinutes();
+					var endMin=it.end.getHours()*60+it.end.getMinutes();
+					if(it.end.getDate()!==it.start.getDate()||endMin<=startMin)endMin=24*60;
+					var top=(startMin/60)*HOUR_PX;
+					var height=Math.max(18,((endMin-startMin)/60)*HOUR_PX);
+					var widthPct=100/it.laneCount,leftPct=it.laneIndex*widthPct;
+					html+='<div class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:'+widthPct+'%;background:'+m.primary+'" title="'+escAttr(it.ev.title)+'">'
+						+'<span class="ms365cal-tl-ev-time">'+pad(it.start.getHours())+':'+pad(it.start.getMinutes())+'</span> '
+						+'<span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span>'
+					+'</div>';
+				});
+				html+='</div>';
+			});
+			html+='</div></div></div>';
+			listEl.innerHTML=html;
+
+			// Scroll to just before the day's first event (or 07:00 with nothing
+			// scheduled) instead of opening on midnight.
+			var earliestMin=null;
+			dayCols.forEach(function(col){col.timed.forEach(function(it){
+				var m=it.start.getHours()*60+it.start.getMinutes();
+				if(earliestMin===null||m<earliestMin)earliestMin=m;
+			});});
+			var scrollHour=earliestMin===null?7:Math.max(0,Math.floor(earliestMin/60)-1);
+			var bodyEl=listEl.querySelector('.ms365cal-tl-body');
+			if(bodyEl)bodyEl.scrollTop=scrollHour*HOUR_PX;
+		}
+
+		// Month: a read-only grid (no drill-down yet) \u2014 each cell capped at a few
+		// event chips plus a "+N fler" overflow, same colour-only/no-label choice
+		// as the timeline views.
+		function renderMonth(events,numDays,ref){
+			var dayCols=[];
+			for(var i=0;i<numDays;i++){
+				var d=new Date(start);d.setDate(d.getDate()+i);
+				dayCols.push({date:d,key:iso(d),events:[],inMonth:d.getMonth()===ref.getMonth()});
+			}
+			var colByKey={};dayCols.forEach(function(c){colByKey[c.key]=c;});
+			var winEnd=new Date(start);winEnd.setDate(winEnd.getDate()+numDays);
+
+			events.forEach(function(e){
+				if(!e.start)return;
+				var st=new Date(e.start);
+				var en=e.end?new Date(e.end):st;
+				var spans=e.allDay||iso(st)!==iso(en);
+				if(!spans){
+					var key=iso(st);
+					if(colByKey[key])colByKey[key].events.push(e);
+					return;
+				}
+				var cursor=new Date(st<start?start:st);
+				var endClamped=new Date(en<winEnd?en:winEnd);
+				while(cursor<endClamped){
+					var k=iso(cursor);
+					if(colByKey[k])colByKey[k].events.push(e);
+					cursor.setDate(cursor.getDate()+1);
+				}
+			});
+
+			var WEEKDAYS=['M\u00e5n','Tis','Ons','Tor','Fre','L\u00f6r','S\u00f6n'];
+			var CAP=3;
+			var html='<div class="ms365cal-month"><div class="ms365cal-month-head">';
+			WEEKDAYS.forEach(function(l){html+='<div class="ms365cal-month-hcell">'+l+'</div>';});
+			html+='</div><div class="ms365cal-month-grid">';
+			dayCols.forEach(function(col){
+				html+='<div class="ms365cal-month-cell'+(col.inMonth?'':' is-outside')+(col.key===todayKey?' is-today':'')+'">'
+					+'<span class="ms365cal-month-daynum">'+col.date.getDate()+'</span>';
+				col.events.slice(0,CAP).forEach(function(e){
+					var m=cfg.meta[e.cal];if(!m)return;
+					html+='<div class="ms365cal-month-chip" style="background:'+m.primary+'" title="'+escAttr(e.title)+'">'+esc(e.title)+'</div>';
+				});
+				if(col.events.length>CAP)html+='<div class="ms365cal-month-more">+'+(col.events.length-CAP)+' fler</div>';
+				html+='</div>';
+			});
+			html+='</div></div>';
+			listEl.innerHTML=html;
+		}
+
 		function paint(){
 			openDetail=null;
 			var events=cache[winKey()]||[];
 			var visible=events.filter(function(e){return enabled[e.cal];});
+			if(mode==='calendar'){
+				if(calView==='month')renderMonth(visible,days,monthRef||start);
+				else renderTimeline(visible,days);
+				return;
+			}
 			if(!visible.length){
 				listEl.innerHTML='<p class="ms365cal-empty">Inga h\u00e4ndelser den h\u00e4r veckan.</p>';
 				return;
@@ -2823,15 +3160,18 @@ function ms365cal_assets() {
 					// as part of a longer span (their real end is past this week), and
 					// events only present because they carried over from an earlier
 					// week — default to next week instead, and treat it as the new
-					// earliest week.
-					if(!autoAdvanceChecked&&iso(start)===iso(minStart)){
+					// earliest week. List mode only: the day/week/month calendar-grid
+					// views always show their actual window (that's the point of a grid),
+					// they don't skip ahead looking for content.
+					if(mode==='list'&&!autoAdvanceChecked&&iso(start)===iso(computeMinStart())){
 						autoAdvanceChecked=true;
 						var hasUpcoming=cache[key].some(function(e){
 							return e.dayKey>=todayKey&&enabled[e.cal]&&!e.longSpan&&!e.carriedOver;
 						});
 						if(!hasUpcoming){
-							start=new Date(start);start.setDate(start.getDate()+days);
-							minStart=new Date(start);
+							refDate=new Date(refDate);refDate.setDate(refDate.getDate()+days);
+							recomputeWindow();
+							floorOverride=new Date(start);
 							load();
 							return;
 						}
@@ -2866,6 +3206,19 @@ function ms365cal_assets() {
 				});
 		}
 
+		// Step refDate by whatever unit the current mode/view actually pages by —
+		// a day, a week, or a full calendar month (not a fixed number of days,
+		// since months vary in length).
+		function stepRef(dir){
+			if(mode==='calendar'&&calView==='day'){
+				refDate=new Date(refDate.getFullYear(),refDate.getMonth(),refDate.getDate()+dir);
+			}else if(mode==='calendar'&&calView==='month'){
+				refDate=new Date(refDate.getFullYear(),refDate.getMonth()+dir,1);
+			}else{
+				refDate=new Date(refDate.getFullYear(),refDate.getMonth(),refDate.getDate()+dir*7);
+			}
+		}
+
 		var COOLDOWN=600; // ms
 		var pageBtns=root.querySelectorAll('.ms365cal-page');
 		function setPaging(disabled){pageBtns.forEach(function(b){b.disabled=disabled;});}
@@ -2874,10 +3227,11 @@ function ms365cal_assets() {
 			btn.addEventListener('click',function(){
 				if(btn.disabled)return;
 				var dir=parseInt(btn.getAttribute('data-dir'),10);
-				var ns=new Date(start);ns.setDate(ns.getDate()+dir*days);
-				if(ns<minStart)ns=new Date(minStart);   // don't page before the current week
-				if(iso(ns)===iso(start))return;          // already at the bound
-				start=ns;
+				var prevIso=iso(start),savedRef=new Date(refDate);
+				stepRef(dir);
+				recomputeWindow();
+				if(start<computeMinStart()){refDate=new Date(today);recomputeWindow();}
+				if(iso(start)===prevIso){refDate=savedRef;recomputeWindow();return;} // already at the bound
 				setPaging(true);
 				load();
 				setTimeout(function(){setPaging(false);updateNav();},COOLDOWN);
