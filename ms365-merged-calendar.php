@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.21.1
+ * Version:           2.21.2
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2546,7 +2546,8 @@ function ms365cal_assets() {
 	.ms365cal-tl-daycol.is-today{background-color:var(--ms-soft);}
 	.ms365cal-tl-event{display:flex;align-items:flex-start;justify-content:flex-start;border:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;position:absolute;box-sizing:border-box;border-radius:4px;padding:2px 5px;font-size:11px;line-height:1.3;color:#fff;box-shadow:-2px 0 3px rgba(0,0,0,.18);transition:box-shadow .12s;}
 	.ms365cal-tl-event:hover,.ms365cal-tl-event:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
-	.ms365cal-tl-event.ms365cal-tl-event--wide{z-index:999!important;width:auto!important;max-width:260px;box-shadow:0 4px 14px rgba(0,0,0,.35);}
+	.ms365cal-tl-event.ms365cal-tl-event--front{z-index:999!important;box-shadow:0 4px 14px rgba(0,0,0,.35);}
+	.ms365cal-tl-event.ms365cal-tl-event--wide{width:auto!important;max-width:260px;}
 	.ms365cal-tl-ev-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
 	/* Calendar mode: Month grid (read-only — no drill-down yet). */
 	.ms365cal-month-head{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:2px;}
@@ -3249,38 +3250,47 @@ function ms365cal_assets() {
 			openEventModal(calEvents[idx]);
 		});
 
-		// Reveal the full title of a covered/truncated cascaded timeline event on
-		// hover or keyboard focus — only grows the box (never shrinks it), and only
-		// when the title is actually truncated (scrollWidth>clientWidth), since a
-		// blanket width:auto on :hover would shrink an already-full-width event down
-		// to its short text's natural width instead of leaving it alone. Hover is
-		// skipped entirely on touch/coarse-pointer devices (no real hover state
-		// there, and tapping already opens the full-detail popup); keyboard focus
-		// stays active everywhere since it's a real, deliberate interaction.
-		function revealIfTruncated(el){
+		// Bring a covered cascaded timeline event to the front on hover or keyboard
+		// focus, and also widen it if its own title is truncated. Bringing to front
+		// is unconditional — a covered event can fit its own (nominal, pre-cascade)
+		// box width and still be entirely hidden behind a later lane's box drawn on
+		// top of it, so gating the front-bump on truncation (an earlier version of
+		// this) left some covered events unreachable by hover. Widening only grows
+		// the box (never shrinks it), and only when the title is actually truncated
+		// (scrollWidth>clientWidth) — a blanket width:auto would shrink an
+		// already-full-width event down to its short text's natural width instead of
+		// leaving it alone. Hover is skipped entirely on touch/coarse-pointer devices
+		// (no real hover state there, and tapping already opens the full-detail
+		// popup); keyboard focus stays active everywhere since it's a real,
+		// deliberate interaction.
+		function bringToFront(el){
+			el.classList.add('ms365cal-tl-event--front');
 			var span=el.querySelector('.ms365cal-tl-ev-title');
 			if(span&&span.scrollWidth>span.clientWidth+0.5)el.classList.add('ms365cal-tl-event--wide');
+		}
+		function resetFront(el){
+			el.classList.remove('ms365cal-tl-event--front','ms365cal-tl-event--wide');
 		}
 		var supportsHover=window.matchMedia&&window.matchMedia('(hover:hover) and (pointer:fine)').matches;
 		if(supportsHover){
 			listEl.addEventListener('mouseover',function(ev){
 				var el=ev.target.closest('.ms365cal-tl-event');
 				if(!el||!listEl.contains(el)||el.contains(ev.relatedTarget))return;
-				revealIfTruncated(el);
+				bringToFront(el);
 			});
 			listEl.addEventListener('mouseout',function(ev){
 				var el=ev.target.closest('.ms365cal-tl-event');
 				if(!el||!listEl.contains(el)||el.contains(ev.relatedTarget))return;
-				el.classList.remove('ms365cal-tl-event--wide');
+				resetFront(el);
 			});
 		}
 		listEl.addEventListener('focusin',function(ev){
 			var el=ev.target.closest('.ms365cal-tl-event');
-			if(el&&listEl.contains(el))revealIfTruncated(el);
+			if(el&&listEl.contains(el))bringToFront(el);
 		});
 		listEl.addEventListener('focusout',function(ev){
 			var el=ev.target.closest('.ms365cal-tl-event');
-			if(el&&listEl.contains(el))el.classList.remove('ms365cal-tl-event--wide');
+			if(el&&listEl.contains(el))resetFront(el);
 		});
 
 		function load(){
