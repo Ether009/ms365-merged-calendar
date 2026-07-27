@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.20.1
+ * Version:           2.20.2
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2544,9 +2544,8 @@ function ms365cal_assets() {
 	.ms365cal-tl-grid{flex:1;display:flex;position:relative;}
 	.ms365cal-tl-daycol{flex:1;position:relative;min-width:0;border-left:1px solid var(--ms-line);background-image:repeating-linear-gradient(to bottom,transparent,transparent 47px,var(--ms-line) 47px,var(--ms-line) 48px);}
 	.ms365cal-tl-daycol.is-today{background-color:var(--ms-soft);}
-	.ms365cal-tl-event{display:block;border:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;position:absolute;box-sizing:border-box;border-radius:4px;padding:2px 5px;font-size:11px;line-height:1.3;color:#fff;overflow:hidden;}
+	.ms365cal-tl-event{display:block;border:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;position:absolute;box-sizing:border-box;border-radius:4px;padding:2px 5px;font-size:11px;line-height:1.3;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 	.ms365cal-tl-event:hover,.ms365cal-tl-event:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
-	.ms365cal-tl-ev-time{font-weight:700;opacity:.85;}
 	/* Calendar mode: Month grid (read-only — no drill-down yet). */
 	.ms365cal-month-head{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:2px;}
 	.ms365cal-month-hcell{text-align:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;opacity:.55;padding:4px 0;}
@@ -3076,10 +3075,7 @@ function ms365cal_assets() {
 					var top=((startMin-rangeStartMin)/60)*HOUR_PX;
 					var height=Math.max(18,((endMin-startMin)/60)*HOUR_PX);
 					var widthPct=100/it.laneCount,leftPct=it.laneIndex*widthPct;
-					html+='<button type="button" class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:'+widthPct+'%;background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'">'
-						+'<span class="ms365cal-tl-ev-time">'+pad(it.start.getHours())+':'+pad(it.start.getMinutes())+'</span> '
-						+'<span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span>'
-					+'</button>';
+					html+='<button type="button" class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:'+widthPct+'%;background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'">'+esc(it.ev.title)+'</button>';
 				});
 				html+='</div>';
 			});
