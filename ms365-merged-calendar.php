@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.17.2
+ * Version:           2.17.3
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2479,10 +2479,11 @@ function ms365cal_assets() {
 	.ms365cal-ongoing{margin:0 0 16px;padding-bottom:8px;border-bottom:1px solid var(--ms-line);}
 	.ms365cal-ongoing-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;opacity:.55;margin:2px 0 4px;}
 	.ms365cal-preview{font-size:12.5px;opacity:.65;margin-top:3px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-clamp:2;}
-	/* Compact layout: times+category is a fixed single line (long category names ellipsis rather than wrap, which is what made the rail's stretched height inconsistent between rows), title+meta is a strictly non-wrapping line (title ellipsises, recurrence drops to just the icon), detail still drops to its own full-width line when opened. Rows sit closer together. */
+	/* Compact layout: times+category is a fixed-width single line — a *fixed* width on .ms365cal-times, not just content that happens to stay on one line, is what actually keeps the rail at the same x position on every row; letting the column size to its own content (width:auto) put the rail at a different x on almost every row depending on how wide that row's time text happened to be. Category label is the flexible element that ellipsises to whatever's left, t1/t2 keep their own width cap so a long multi-day date/time can't blow the budget either. Title+meta is a strictly non-wrapping line (title ellipsises, recurrence drops to just the icon), detail still drops to its own full-width line when opened. Rows sit closer together. */
 	.ms365cal-layout-compact .ms365cal-row{padding:0 10px;}
-	.ms365cal-layout-compact .ms365cal-times{flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;width:auto;gap:6px;text-align:left;padding:4px 0;font-size:11px;}
-	.ms365cal-layout-compact .ms365cal-cat{padding:1px 6px;font-size:10px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	.ms365cal-layout-compact .ms365cal-times{flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;width:200px;flex:0 0 200px;overflow:hidden;gap:6px;text-align:left;padding:4px 0;font-size:11px;}
+	.ms365cal-layout-compact .ms365cal-t1,.ms365cal-layout-compact .ms365cal-t2{flex:0 0 auto;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	.ms365cal-layout-compact .ms365cal-cat{flex:1 1 auto;min-width:0;padding:1px 6px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 	.ms365cal-layout-compact .ms365cal-rail{margin:4px 0;}
 	.ms365cal-layout-compact .ms365cal-hbody{padding:4px 0;}
 	.ms365cal-layout-compact .ms365cal-line{display:flex;flex-wrap:nowrap;align-items:baseline;gap:8px;min-width:0;}
