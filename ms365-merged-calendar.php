@@ -2479,8 +2479,7 @@ function ms365cal_assets() {
 	.ms365cal-ongoing{margin:0 0 16px;padding-bottom:8px;border-bottom:1px solid var(--ms-line);}
 	.ms365cal-ongoing-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;opacity:.55;margin:2px 0 4px;}
 	.ms365cal-preview{font-size:12.5px;opacity:.65;margin-top:3px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-clamp:2;}
-	/* Compact layout: times+category on one line, title+meta on one line, detail
-	   (when opened) drops to its own full-width line. Rows sit closer together. */
+	/* Compact layout: times+category on one line, title+meta on one line, detail (when opened) drops to its own full-width line. Rows sit closer together. */
 	.ms365cal-layout-compact .ms365cal-row{padding:0 10px;}
 	.ms365cal-layout-compact .ms365cal-times{flex-direction:row;align-items:center;justify-content:flex-start;width:auto;gap:6px;text-align:left;padding:4px 0;font-size:11px;}
 	.ms365cal-layout-compact .ms365cal-cat{padding:1px 6px;font-size:10px;}
