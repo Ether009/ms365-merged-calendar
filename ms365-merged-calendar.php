@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.17.0
+ * Version:           2.17.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2479,11 +2479,13 @@ function ms365cal_assets() {
 	.ms365cal-ongoing{margin:0 0 16px;padding-bottom:8px;border-bottom:1px solid var(--ms-line);}
 	.ms365cal-ongoing-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;opacity:.55;margin:2px 0 4px;}
 	.ms365cal-preview{font-size:12.5px;opacity:.65;margin-top:3px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-clamp:2;}
-	/* Compact layout: title + meta on one line, detail (when opened) drops to its own full-width line. */
+	/* Compact layout: times+category on one line, title+meta on one line, detail
+	   (when opened) drops to its own full-width line. Rows sit closer together. */
 	.ms365cal-layout-compact .ms365cal-row{padding:0 10px;}
-	.ms365cal-layout-compact .ms365cal-times{padding:7px 0;font-size:11px;width:70px;}
-	.ms365cal-layout-compact .ms365cal-rail{margin:7px 0;}
-	.ms365cal-layout-compact .ms365cal-hbody{padding:7px 0;flex-direction:row;flex-wrap:wrap;align-items:baseline;column-gap:10px;row-gap:2px;}
+	.ms365cal-layout-compact .ms365cal-times{flex-direction:row;align-items:center;justify-content:flex-start;width:auto;gap:6px;text-align:left;padding:4px 0;font-size:11px;}
+	.ms365cal-layout-compact .ms365cal-cat{padding:1px 6px;font-size:10px;}
+	.ms365cal-layout-compact .ms365cal-rail{margin:4px 0;}
+	.ms365cal-layout-compact .ms365cal-hbody{padding:4px 0;flex-direction:row;flex-wrap:wrap;align-items:baseline;column-gap:10px;row-gap:2px;}
 	.ms365cal-layout-compact .ms365cal-ev,.ms365cal-layout-compact .ms365cal-ev-static{flex:0 1 auto;width:auto;}
 	.ms365cal-layout-compact .ms365cal-title{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom;}
 	.ms365cal-layout-compact .ms365cal-meta-line{margin-top:0;padding-top:0;flex:1 1 auto;min-width:120px;}
