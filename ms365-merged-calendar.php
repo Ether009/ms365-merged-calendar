@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.17.6
+ * Version:           2.17.7
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2398,9 +2398,9 @@ function ms365cal_shortcode( $atts ) {
 		</div>
 
 		<div class="ms365cal-nav">
-			<button type="button" class="ms365cal-page" data-dir="-1" aria-label="Föregående vecka">&larr;</button>
+			<button type="button" class="ms365cal-page" data-dir="-1" aria-label="Föregående vecka"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"></polyline></svg></button>
 			<span class="ms365cal-range"></span>
-			<button type="button" class="ms365cal-page" data-dir="1" aria-label="Nästa vecka">&rarr;</button>
+			<button type="button" class="ms365cal-page" data-dir="1" aria-label="Nästa vecka"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg></button>
 		</div>
 
 		<div class="ms365cal-list" aria-live="polite">
@@ -2434,12 +2434,12 @@ function ms365cal_assets() {
 	.ms365cal-layout-btn:hover{opacity:.9;background:var(--ms-soft);}
 	.ms365cal-layout-btn.is-active{opacity:1;border-color:currentColor;background:var(--ms-soft);font-weight:600;}
 	.ms365cal-nav{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:16px;padding:8px;border:1px solid var(--ms-line);border-radius:14px;background:var(--ms-soft);}
-	.ms365cal-page{width:44px;height:44px;flex:0 0 auto;border:1px solid var(--ms-line);border-radius:10px;background:rgba(120,120,125,.14);cursor:pointer;font-size:20px;font-weight:700;line-height:1;color:inherit;opacity:1;transition:background .15s,border-color .15s,transform .1s;}
-	.ms365cal-page:hover{background:var(--ms-line);border-color:currentColor;}
-	.ms365cal-page:active:not(:disabled){transform:scale(.94);}
+	.ms365cal-page{width:40px;height:40px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;border:none;border-radius:50%;background:rgba(120,120,125,.16);box-shadow:0 1px 2px rgba(0,0,0,.07);cursor:pointer;color:inherit;opacity:1;transition:background .15s,box-shadow .15s,transform .1s;}
+	.ms365cal-page:hover{background:rgba(120,120,125,.28);box-shadow:0 2px 5px rgba(0,0,0,.12);transform:translateY(-1px);}
+	.ms365cal-page:active:not(:disabled){transform:translateY(0) scale(.92);box-shadow:0 1px 2px rgba(0,0,0,.07);}
 	.ms365cal-page:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
-	.ms365cal-page:disabled{opacity:.25;cursor:default;background:transparent;}
-	.ms365cal-page:disabled:hover{background:transparent;border-color:var(--ms-line);}
+	.ms365cal-page:disabled{opacity:.25;cursor:default;background:transparent;box-shadow:none;}
+	.ms365cal-page:disabled:hover{background:transparent;box-shadow:none;transform:none;}
 	.ms365cal-range{font-size:15px;font-weight:700;opacity:.9;min-width:200px;text-align:center;}
 	.ms365cal-list{position:relative;min-height:60px;}
 	.ms365cal-list.is-loading{opacity:.55;transition:opacity .15s;}
