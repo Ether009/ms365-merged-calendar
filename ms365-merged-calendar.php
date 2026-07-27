@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.17.1
+ * Version:           2.17.2
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2479,16 +2479,19 @@ function ms365cal_assets() {
 	.ms365cal-ongoing{margin:0 0 16px;padding-bottom:8px;border-bottom:1px solid var(--ms-line);}
 	.ms365cal-ongoing-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;opacity:.55;margin:2px 0 4px;}
 	.ms365cal-preview{font-size:12.5px;opacity:.65;margin-top:3px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-clamp:2;}
-	/* Compact layout: times+category on one line, title+meta on one line, detail (when opened) drops to its own full-width line. Rows sit closer together. */
+	/* Compact layout: times+category is a fixed single line (long category names ellipsis rather than wrap, which is what made the rail's stretched height inconsistent between rows), title+meta is a strictly non-wrapping line (title ellipsises, recurrence drops to just the icon), detail still drops to its own full-width line when opened. Rows sit closer together. */
 	.ms365cal-layout-compact .ms365cal-row{padding:0 10px;}
-	.ms365cal-layout-compact .ms365cal-times{flex-direction:row;align-items:center;justify-content:flex-start;width:auto;gap:6px;text-align:left;padding:4px 0;font-size:11px;}
-	.ms365cal-layout-compact .ms365cal-cat{padding:1px 6px;font-size:10px;}
+	.ms365cal-layout-compact .ms365cal-times{flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;width:auto;gap:6px;text-align:left;padding:4px 0;font-size:11px;}
+	.ms365cal-layout-compact .ms365cal-cat{padding:1px 6px;font-size:10px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 	.ms365cal-layout-compact .ms365cal-rail{margin:4px 0;}
-	.ms365cal-layout-compact .ms365cal-hbody{padding:4px 0;flex-direction:row;flex-wrap:wrap;align-items:baseline;column-gap:10px;row-gap:2px;}
-	.ms365cal-layout-compact .ms365cal-ev,.ms365cal-layout-compact .ms365cal-ev-static{flex:0 1 auto;width:auto;}
-	.ms365cal-layout-compact .ms365cal-title{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom;}
-	.ms365cal-layout-compact .ms365cal-meta-line{margin-top:0;padding-top:0;flex:1 1 auto;min-width:120px;}
-	.ms365cal-layout-compact .ms365cal-detail{flex:1 1 100%;order:3;}
+	.ms365cal-layout-compact .ms365cal-hbody{padding:4px 0;}
+	.ms365cal-layout-compact .ms365cal-line{display:flex;flex-wrap:nowrap;align-items:baseline;gap:8px;min-width:0;}
+	.ms365cal-layout-compact .ms365cal-ev,.ms365cal-layout-compact .ms365cal-ev-static{flex:1 1 auto;min-width:0;width:auto;}
+	.ms365cal-layout-compact .ms365cal-title{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	.ms365cal-layout-compact .ms365cal-meta-line{flex:0 0 auto;margin-top:0;padding-top:0;white-space:nowrap;}
+	.ms365cal-layout-compact .ms365cal-loc-line{max-width:150px;}
+	.ms365cal-layout-compact .ms365cal-recur-line{cursor:default;}
+	.ms365cal-layout-compact .ms365cal-detail{margin-top:2px;}
 	/* Expanded layout: an always-visible body snippet under the title. */
 	.ms365cal-layout-expanded .ms365cal-hbody{padding:12px 0;}
 	</style>
@@ -2612,6 +2615,14 @@ function ms365cal_assets() {
 				if(e.recur)metaBits+='<span class="ms365cal-recur-line">\u21bb '+esc(recurShort)+'</span>';
 				var metaLine=metaBits?'<div class="ms365cal-meta-line">'+metaBits+'</div>':'';
 
+				// Compact only: the recurrence pattern text is dropped to just the icon
+				// (full pattern still available on hover via title=) so the line has room
+				// to stay a single line instead of wrapping.
+				var compactBits='';
+				if(locText)compactBits+='<span class="ms365cal-loc-line">'+esc(locText)+'</span>';
+				if(e.recur)compactBits+='<span class="ms365cal-recur-line" title="'+escAttr(e.recur)+'">\u21bb</span>';
+				var compactMetaLine=compactBits?'<div class="ms365cal-meta-line">'+compactBits+'</div>':'';
+
 				// No "when" line here \u2014 the start/end times stay visible in the left
 				// column (which stretches with the row) while expanded, so repeating
 				// them in the body would be redundant. No location either \u2014 it's on
@@ -2641,6 +2652,18 @@ function ms365cal_assets() {
 				// from_page() — so esc() here, not injected as markup like e.body).
 				var previewHtml=(layout==='expanded'&&e.preview)?'<div class="ms365cal-preview">'+esc(e.preview)+'</div>':'';
 
+				var detailHtml=showDetail?'<div class="ms365cal-detail"'+lazyAttrs+' hidden>'+d+'</div>':'';
+
+				// Compact wraps title+meta in their own nowrap flex line (.ms365cal-line)
+				// so the two can never wrap apart onto separate lines the way plain
+				// flex-wrapping siblings could — title ellipsises instead. Detail (only
+				// present once expanded) stays a sibling below it, same as the other
+				// layouts, so expanding still grows the row downward rather than
+				// replacing anything.
+				var hbodyInner=(layout==='compact')
+					?('<div class="ms365cal-line">'+titleHtml+compactMetaLine+'</div>'+detailHtml)
+					:(titleHtml+previewHtml+detailHtml+metaLine);
+
 				html+='<div class="ms365cal-row">'
 					+'<div class="ms365cal-head">'
 						+'<div class="ms365cal-times">'
@@ -2649,12 +2672,7 @@ function ms365cal_assets() {
 							+'<span class="ms365cal-t2">'+esc(e.t2)+'</span>'
 						+'</div>'
 						+'<div class="ms365cal-rail" style="background:'+m.primary+'"></div>'
-						+'<div class="ms365cal-hbody">'
-							+titleHtml
-							+previewHtml
-							+(showDetail?'<div class="ms365cal-detail"'+lazyAttrs+' hidden>'+d+'</div>':'')
-							+metaLine
-						+'</div>'
+						+'<div class="ms365cal-hbody">'+hbodyInner+'</div>'
 					+'</div>'
 				+'</div>';
 			});
