@@ -2447,10 +2447,7 @@ function ms365cal_assets() {
 	.ms365cal-chip.is-on{border-color:var(--cc);background:var(--cbg);color:var(--ct);opacity:1;}
 	.ms365cal-dot{width:9px;height:9px;border-radius:50%;background:currentColor;opacity:.35;}
 	.ms365cal-chip.is-on .ms365cal-dot{background:var(--cc);opacity:1;}
-	/* Tier 1 (List/Calendar): a filled "track" with a pill thumb — the primary,
-	   higher-level choice. Tier 2 (below) is deliberately a different shape
-	   (squared-off tabs, not pills) and visually lighter, so the two read as
-	   different kinds of control rather than one long row of similar buttons. */
+	/* Tier 1 (List/Calendar): a filled "track" with a pill thumb — the primary, higher-level choice. Tier 2 (below) is deliberately a different shape (squared-off tabs, not pills) and visually lighter, so the two read as different kinds of control rather than one long row of similar buttons. */
 	.ms365cal-mode-switch{display:flex;justify-content:flex-end;gap:2px;padding:3px;background:var(--ms-soft);border-radius:999px;margin:0 0 8px auto;width:max-content;}
 	.ms365cal-mode-btn{font-size:13px;padding:7px 16px;background:transparent;border:none;border-radius:999px;cursor:pointer;color:inherit;opacity:.55;font-weight:700;transition:opacity .15s,background .15s;}
 	.ms365cal-mode-btn:hover{opacity:.85;}
