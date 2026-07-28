@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.26.0
+ * Version:           2.27.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -119,6 +119,7 @@ function ms365cal_get_settings() {
 		'rate_window'         => MS365CAL_RATE_WINDOW,
 		'show_outlook'        => false,
 		'show_recurrence'     => false,
+		'timeline_interval'   => 15,
 		'events_top'          => 100,
 		'lazy_body'           => true,
 		'deploy_key'          => '',
@@ -2382,6 +2383,7 @@ function ms365cal_shortcode( $atts ) {
 		'startD'      => (int) $today->format( 'j' ),
 		'showOutlook' => ! empty( $settings['show_outlook'] ),
 		'lazyBody'    => ! empty( $settings['lazy_body'] ),
+		'tlInterval'  => (int) $settings['timeline_interval'],
 	);
 
 	$uid = 'ms365cal-' . wp_generate_password( 6, false, false );
@@ -2542,6 +2544,9 @@ function ms365cal_assets() {
 	.ms365cal-tl-hour:first-child{border-top:0;}
 	.ms365cal-tl-grid{flex:1;display:flex;position:relative;}
 	.ms365cal-tl-daycol{flex:1;position:relative;min-width:0;border-left:1px solid var(--ms-line);background-image:repeating-linear-gradient(to bottom,transparent,transparent 47px,var(--ms-line) 47px,var(--ms-line) 48px);}
+	/* Faint sub-hour guide lines, admin-configurable (Settings → Setup → Timeline interval, default 15min) — purely visual, doesn't change what times events can start/end at. Hourly-only (60min) skips this second layer entirely and keeps just the base hour line above. 12px/24px are 15/30 minutes of the fixed HOUR_PX=48px-per-hour scale. */
+	.ms365cal-tl-fine-15 .ms365cal-tl-daycol{background-image:repeating-linear-gradient(to bottom,transparent,transparent 47px,var(--ms-line) 47px,var(--ms-line) 48px),repeating-linear-gradient(to bottom,transparent,transparent 11px,rgba(120,120,125,.1) 11px,rgba(120,120,125,.1) 12px);}
+	.ms365cal-tl-fine-30 .ms365cal-tl-daycol{background-image:repeating-linear-gradient(to bottom,transparent,transparent 47px,var(--ms-line) 47px,var(--ms-line) 48px),repeating-linear-gradient(to bottom,transparent,transparent 23px,rgba(120,120,125,.1) 23px,rgba(120,120,125,.1) 24px);}
 	.ms365cal-tl-daycol.is-today{background-color:var(--ms-soft);}
 	.ms365cal-tl-event{display:flex;align-items:flex-start;justify-content:flex-start;border:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;position:absolute;box-sizing:border-box;border-radius:4px;padding:2px 5px;font-size:11px;line-height:1.3;color:#fff;box-shadow:-2px 0 3px rgba(0,0,0,.18);transition:box-shadow .12s;}
 	.ms365cal-tl-event:hover,.ms365cal-tl-event:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
@@ -3102,7 +3107,8 @@ function ms365cal_assets() {
 			}
 			var rangeStartMin=rangeStartHour*60;
 
-			var html='<div class="ms365cal-tl">';
+			var tlIntervalClass=cfg.tlInterval===30?' ms365cal-tl-fine-30':(cfg.tlInterval===60?'':' ms365cal-tl-fine-15');
+			var html='<div class="ms365cal-tl'+tlIntervalClass+'">';
 			html+='<div class="ms365cal-tl-header"><div class="ms365cal-tl-axis-spacer"></div>';
 			dayCols.forEach(function(col){
 				html+='<div class="ms365cal-tl-hcell'+(col.key===todayKey?' is-today':'')+'">'
@@ -3581,6 +3587,8 @@ function ms365cal_settings_page() {
 		$new['rate_window']         = max( 1, (int) ( $_POST['rate_window'] ?? MS365CAL_RATE_WINDOW ) );
 		$new['show_outlook']        = ! empty( $_POST['show_outlook'] );
 		$new['show_recurrence']     = ! empty( $_POST['show_recurrence'] );
+		$posted_interval            = (int) ( $_POST['timeline_interval'] ?? 15 );
+		$new['timeline_interval']   = in_array( $posted_interval, array( 15, 30, 60 ), true ) ? $posted_interval : 15;
 		$new['events_top']          = max( 10, min( 999, (int) ( $_POST['events_top'] ?? 100 ) ) );
 		$new['lazy_body']           = ! empty( $_POST['lazy_body'] );
 
@@ -3781,6 +3789,13 @@ function ms365cal_settings_page() {
 					</td></tr>
 					<tr><th>Outlook link<?php ms365cal_help( 'Off by default. When enabled, each expanded event includes a link to open it in Outlook on the web.' ); ?></th><td>
 						<label><input type="checkbox" name="show_outlook" <?php checked( ! empty( $s['show_outlook'] ) ); ?>> Show an &ldquo;Open in Outlook&rdquo; link in the expanded event details</label>
+					</td></tr>
+					<tr><th>Timeline interval<?php ms365cal_help( 'How finely the Day/Week/3-day/Workweek calendar-mode timeline is subdivided with faint guide lines, to make it easier to judge where an event starts and ends at a glance. Only affects the grid lines drawn between the hour marks &mdash; not the hour marks themselves, and not what times events can actually start/end at (that\'s whatever Graph returns). Default 15 minutes.' ); ?></th><td>
+						<select name="timeline_interval">
+							<?php foreach ( array( 15, 30, 60 ) as $opt ) : ?>
+								<option value="<?php echo esc_attr( $opt ); ?>" <?php selected( (int) $s['timeline_interval'], $opt ); ?>><?php echo 60 === $opt ? 'Hourly only (no sub-lines)' : esc_html( $opt . ' minutes' ); ?></option>
+							<?php endforeach; ?>
+						</select>
 					</td></tr>
 					<tr><th>Deploy key<?php ms365cal_help( 'Enables <code>POST /wp-json/ms365cal/v1/self-update</code> (header <code>X-MS365CAL-Deploy-Key</code>), which makes this site install the plugin\'s latest GitHub release on demand. Leave blank to keep the endpoint disabled. Anyone with the key can trigger a reinstall, so use a long random value and rotate it if it leaks. Defining <code>MS365CAL_DEPLOY_KEY</code> in wp-config.php is more secure and takes precedence.' ); ?></th><td>
 						<?php if ( $deploy_const ) : ?>
