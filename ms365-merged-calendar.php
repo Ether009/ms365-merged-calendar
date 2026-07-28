@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.23.1
+ * Version:           2.23.2
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2548,6 +2548,7 @@ function ms365cal_assets() {
 	.ms365cal-tl-event.ms365cal-tl-event--front{z-index:999!important;box-shadow:0 4px 14px rgba(0,0,0,.35);}
 	.ms365cal-tl-event.ms365cal-tl-event--wide{width:auto!important;max-width:260px;}
 	.ms365cal-tl-ev-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+	.ms365cal-tl-event--has-badge .ms365cal-tl-ev-title{padding-right:34px;}
 	/* Calendar mode: Month grid (read-only — no drill-down yet). */
 	.ms365cal-month-head{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:2px;}
 	.ms365cal-month-hcell{text-align:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;opacity:.55;padding:4px 0;}
@@ -2560,7 +2561,7 @@ function ms365cal_assets() {
 	.ms365cal-month-chip:hover,.ms365cal-month-chip:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
 	.ms365cal-month-more{display:block;width:100%;border:none;background:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;font-size:10px;opacity:.6;padding:0;color:inherit;}
 	.ms365cal-month-more:hover,.ms365cal-month-more:focus-visible{opacity:1;text-decoration:underline;}
-	.ms365cal-tl-more{position:absolute;right:3px;z-index:1000;min-width:26px;height:24px;padding:0 7px;box-sizing:border-box;border:2px solid #fff;border-radius:999px;background:#d6336c;color:#fff;font-size:12px;font-weight:800;line-height:20px;cursor:pointer;text-align:center;text-transform:none;letter-spacing:normal;box-shadow:0 2px 6px rgba(0,0,0,.35);}
+	.ms365cal-tl-more{position:absolute;right:2px;z-index:1000;min-width:26px;height:22px;padding:0 6px;box-sizing:border-box;border:2px solid #fff;border-radius:999px;background:#d6336c;color:#fff;font-size:11px;font-weight:800;line-height:18px;cursor:pointer;text-align:center;text-transform:none;letter-spacing:normal;box-shadow:0 2px 6px rgba(0,0,0,.35);}
 	.ms365cal-tl-more:hover,.ms365cal-tl-more:focus-visible{background:#a61e4d;outline:2px solid rgba(255,255,255,.6);outline-offset:1px;}
 	/* Calendar mode: event-detail popup, opened by clicking a timeline event or a Month/all-day chip — those are small colour blocks with no room for List's inline accordion. A solid background is unavoidable here (unlike the rest of this plugin, which stays transparent to blend with the host theme) since a popup has to stay legible over arbitrary page content behind it; Canvas/CanvasText are the dark-mode-aware system colours for "page background/text", with a plain #fff/#1d2327 fallback for browsers that don't support them. */
 	.ms365cal-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;}
@@ -3135,20 +3136,22 @@ function ms365cal_assets() {
 					// counts exactly what it replaces rather than the cluster's total.
 					if(it.laneIndex>=CASCADE_VISIBLE_MAX)return;
 					var leftPct=it.laneIndex*CASCADE_STEP_PCT;
-					html+='<button type="button" class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+';background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'"><span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span></button>';
-					// The cluster's first eligible visible lane gets a single "+N more"
-					// badge — a guaranteed, tap-friendly way to reach the events that
-					// aren't rendered at all, since hover has no touch equivalent and a
-					// covered box would receive zero pointer events regardless of
-					// device. A "cluster" from layoutLanes() can chain many small
-					// overlaps together across a whole busy stretch of the day (any
-					// touching/overlapping run), so multiple *different* events can each
+					// A "cluster" from layoutLanes() can chain many small overlaps
+					// together across a whole busy stretch of the day (any touching/
+					// overlapping run), so multiple *different* events can each
 					// independently land in the last visible lane at their own start
 					// time — badgedClusters (by clusterMembers reference, unique per
-					// cluster) keeps that down to exactly one badge per cluster instead
-					// of one per occurrence, which otherwise repeated the same "+N"
-					// several times down the column.
-					if(it.laneCount>CASCADE_VISIBLE_MAX&&it.laneIndex===CASCADE_VISIBLE_MAX-1&&badgedClusters.indexOf(it.clusterMembers)===-1){
+					// cluster) keeps the overflow badge down to exactly one per cluster
+					// instead of one per occurrence. Whichever event actually gets the
+					// badge needs room reserved in its own title for it (below) — an
+					// absolutely-positioned badge trying to dodge the text via offset
+					// alone can't reliably avoid it in a densely-packed timeline (found
+					// live: even shifting it up 12px still clipped real words, since
+					// back-to-back events leave near-zero free vertical space to dodge
+					// into) — so the title truncates *before* reaching the badge instead.
+					var getsBadge=it.laneCount>CASCADE_VISIBLE_MAX&&it.laneIndex===CASCADE_VISIBLE_MAX-1&&badgedClusters.indexOf(it.clusterMembers)===-1;
+					html+='<button type="button" class="ms365cal-tl-event'+(getsBadge?' ms365cal-tl-event--has-badge':'')+'" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+';background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'"><span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span></button>';
+					if(getsBadge){
 						badgedClusters.push(it.clusterMembers);
 						// clusterMembers is sorted by start time, not by lane assignment,
 						// so "the hidden ones" isn't just the tail of the array — filter on
