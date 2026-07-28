@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.27.1
+ * Version:           2.27.2
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2540,14 +2540,14 @@ function ms365cal_assets() {
 	.ms365cal-tl-chip:hover,.ms365cal-tl-chip:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
 	.ms365cal-tl-body{display:flex;max-height:560px;overflow-y:auto;}
 	.ms365cal-tl-axis{flex:0 0 42px;}
-	.ms365cal-tl-hour{height:60px;box-sizing:border-box;border-top:1px solid var(--ms-line);font-size:10.5px;opacity:.5;text-align:right;padding-right:6px;transform:translateY(-6px);}
+	.ms365cal-tl-hour{height:72px;box-sizing:border-box;border-top:1px solid var(--ms-line);font-size:10.5px;opacity:.5;text-align:right;padding-right:6px;transform:translateY(-6px);}
 	.ms365cal-tl-hour:first-child{border-top:0;}
 	.ms365cal-tl-grid{flex:1;display:flex;position:relative;}
-	/* One "segment" (whichever interval — 15/30/60min — Settings → Setup → Timeline interval chose) is always SEGMENT_PX=15px tall regardless of which interval is selected, so switching intervals changes how many segments an hour has, not how big any one segment is — HOUR_PX (see renderTimeline()) is derived from this, not the other way around. Purely visual, doesn't change what times events can start/end at. Base rule here is the 60min (hourly-only) case: 1 segment = 1 hour = 15px, no separate fine layer needed since there's nothing finer to draw. */
-	.ms365cal-tl-daycol{flex:1;position:relative;min-width:0;border-left:1px solid var(--ms-line);background-image:repeating-linear-gradient(to bottom,transparent,transparent 14px,var(--ms-line) 14px,var(--ms-line) 15px);}
-	/* 15min setting: 4 segments/hour, hour line every 60px; 30min: 2 segments/hour, hour line every 30px. Both share the same 15px fine-line layer (SEGMENT_PX is constant) — only the hour-boundary spacing differs between them. */
-	.ms365cal-tl-fine-15 .ms365cal-tl-daycol{background-image:repeating-linear-gradient(to bottom,transparent,transparent 59px,var(--ms-line) 59px,var(--ms-line) 60px),repeating-linear-gradient(to bottom,transparent,transparent 14px,rgba(120,120,125,.1) 14px,rgba(120,120,125,.1) 15px);}
-	.ms365cal-tl-fine-30 .ms365cal-tl-daycol{background-image:repeating-linear-gradient(to bottom,transparent,transparent 29px,var(--ms-line) 29px,var(--ms-line) 30px),repeating-linear-gradient(to bottom,transparent,transparent 14px,rgba(120,120,125,.1) 14px,rgba(120,120,125,.1) 15px);}
+	/* One "segment" (whichever interval — 15/30/60min — Settings → Setup → Timeline interval chose) is always SEGMENT_PX=18px tall regardless of which interval is selected, so switching intervals changes how many segments an hour has, not how big any one segment is — HOUR_PX (see renderTimeline()) is derived from this, not the other way around. Purely visual, doesn't change what times events can start/end at. Base rule here is the 60min (hourly-only) case: 1 segment = 1 hour = 18px, no separate fine layer needed since there's nothing finer to draw. */
+	.ms365cal-tl-daycol{flex:1;position:relative;min-width:0;border-left:1px solid var(--ms-line);background-image:repeating-linear-gradient(to bottom,transparent,transparent 17px,var(--ms-line) 17px,var(--ms-line) 18px);}
+	/* 15min setting: 4 segments/hour, hour line every 72px; 30min: 2 segments/hour, hour line every 36px. Both share the same 18px fine-line layer (SEGMENT_PX is constant) — only the hour-boundary spacing differs between them. */
+	.ms365cal-tl-fine-15 .ms365cal-tl-daycol{background-image:repeating-linear-gradient(to bottom,transparent,transparent 71px,var(--ms-line) 71px,var(--ms-line) 72px),repeating-linear-gradient(to bottom,transparent,transparent 17px,rgba(120,120,125,.1) 17px,rgba(120,120,125,.1) 18px);}
+	.ms365cal-tl-fine-30 .ms365cal-tl-daycol{background-image:repeating-linear-gradient(to bottom,transparent,transparent 35px,var(--ms-line) 35px,var(--ms-line) 36px),repeating-linear-gradient(to bottom,transparent,transparent 17px,rgba(120,120,125,.1) 17px,rgba(120,120,125,.1) 18px);}
 	.ms365cal-tl-daycol.is-today{background-color:var(--ms-soft);}
 	.ms365cal-tl-event{display:flex;align-items:flex-start;justify-content:flex-start;border:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;position:absolute;box-sizing:border-box;border-radius:4px;padding:2px 5px;font-size:11px;line-height:1.3;color:#fff;box-shadow:-2px 0 3px rgba(0,0,0,.18);transition:box-shadow .12s;}
 	.ms365cal-tl-event:hover,.ms365cal-tl-event:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
@@ -3060,7 +3060,7 @@ function ms365cal_assets() {
 			// HOUR_PX (how tall a full hour renders) scales with how many segments
 			// make up an hour rather than being a fixed constant — switching to a
 			// finer interval makes the timeline taller, not the segments smaller.
-			var SEGMENT_PX=15;
+			var SEGMENT_PX=18;
 			var HOUR_PX=SEGMENT_PX*(60/cfg.tlInterval);
 			var dayCols=[];
 			for(var i=0;i<numDays;i++){
