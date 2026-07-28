@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.23.2
+ * Version:           2.23.3
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -3121,6 +3121,17 @@ function ms365cal_assets() {
 			dayCols.forEach(function(col){
 				html+='<div class="ms365cal-tl-daycol'+(col.key===todayKey?' is-today':'')+'">';
 				var badgedClusters=[];
+				// Reserving title padding only within the cluster that actually
+				// overflows isn't enough — a badge can still land close enough to an
+				// *adjacent* (temporally separate, non-overlapping) cluster's box to
+				// clip its text too, since every visible lane always extends to the
+				// column's shared right edge regardless of which cluster it belongs
+				// to (confirmed live: an event from a neighbouring cluster still had
+				// real, unpadded text reaching into a badge's rect). Scoping the
+				// reservation to the whole day column sidesteps needing to reason
+				// about cross-cluster adjacency at all — if this day has any overflow
+				// badge anywhere, every visible event in it reserves the space.
+				var dayHasBadge=col.timed.some(function(x){return x.laneIndex<CASCADE_VISIBLE_MAX&&x.laneCount>CASCADE_VISIBLE_MAX;});
 				col.timed.forEach(function(it){
 					var m=cfg.meta[it.ev.cal];if(!m)return;
 					var startMin=it.start.getHours()*60+it.start.getMinutes();
@@ -3136,22 +3147,17 @@ function ms365cal_assets() {
 					// counts exactly what it replaces rather than the cluster's total.
 					if(it.laneIndex>=CASCADE_VISIBLE_MAX)return;
 					var leftPct=it.laneIndex*CASCADE_STEP_PCT;
+					html+='<button type="button" class="ms365cal-tl-event'+(dayHasBadge?' ms365cal-tl-event--has-badge':'')+'" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+';background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'"><span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span></button>';
 					// A "cluster" from layoutLanes() can chain many small overlaps
 					// together across a whole busy stretch of the day (any touching/
 					// overlapping run), so multiple *different* events can each
 					// independently land in the last visible lane at their own start
 					// time — badgedClusters (by clusterMembers reference, unique per
-					// cluster) keeps the overflow badge down to exactly one per cluster
-					// instead of one per occurrence. Whichever event actually gets the
-					// badge needs room reserved in its own title for it (below) — an
-					// absolutely-positioned badge trying to dodge the text via offset
-					// alone can't reliably avoid it in a densely-packed timeline (found
-					// live: even shifting it up 12px still clipped real words, since
-					// back-to-back events leave near-zero free vertical space to dodge
-					// into) — so the title truncates *before* reaching the badge instead.
-					var getsBadge=it.laneCount>CASCADE_VISIBLE_MAX&&it.laneIndex===CASCADE_VISIBLE_MAX-1&&badgedClusters.indexOf(it.clusterMembers)===-1;
-					html+='<button type="button" class="ms365cal-tl-event'+(getsBadge?' ms365cal-tl-event--has-badge':'')+'" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+';background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'"><span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span></button>';
-					if(getsBadge){
+					// cluster) keeps the badge button itself down to exactly one per
+					// cluster instead of one per occurrence (the padding reservation
+					// above is scoped to the whole day, not just this cluster, so it
+					// doesn't need this same dedup).
+					if(it.laneCount>CASCADE_VISIBLE_MAX&&it.laneIndex===CASCADE_VISIBLE_MAX-1&&badgedClusters.indexOf(it.clusterMembers)===-1){
 						badgedClusters.push(it.clusterMembers);
 						// clusterMembers is sorted by start time, not by lane assignment,
 						// so "the hidden ones" isn't just the tail of the array — filter on
