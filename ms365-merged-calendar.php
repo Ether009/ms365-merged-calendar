@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.22.0
+ * Version:           2.23.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2523,7 +2523,6 @@ function ms365cal_assets() {
 	.ms365cal-layout-compact .ms365cal-loc-line{max-width:150px;}
 	/* Fixed width whether or not there's actually a pattern to show (see the JS: a recurrence-less row still gets an empty span here) — otherwise the location's start position would shift depending on whether a neighbouring row happened to have a recurrence icon or not. */
 	.ms365cal-layout-compact .ms365cal-recur-line{display:inline-block;width:14px;flex:0 0 auto;text-align:center;cursor:default;}
-	.ms365cal-layout-compact .ms365cal-detail{margin-top:2px;}
 	/* Expanded layout: an always-visible body snippet under the title. */
 	.ms365cal-layout-expanded .ms365cal-hbody{padding:12px 0;}
 	/* Calendar mode: Day/Week timeline. */
@@ -2561,8 +2560,8 @@ function ms365cal_assets() {
 	.ms365cal-month-chip:hover,.ms365cal-month-chip:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
 	.ms365cal-month-more{display:block;width:100%;border:none;background:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;font-size:10px;opacity:.6;padding:0;color:inherit;}
 	.ms365cal-month-more:hover,.ms365cal-month-more:focus-visible{opacity:1;text-decoration:underline;}
-	.ms365cal-tl-more{position:absolute;right:2px;z-index:1000;width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:9px;font-weight:700;line-height:16px;padding:0;cursor:pointer;text-align:center;text-transform:none;letter-spacing:normal;}
-	.ms365cal-tl-more:hover,.ms365cal-tl-more:focus-visible{background:rgba(0,0,0,.75);outline:2px solid rgba(255,255,255,.6);outline-offset:1px;}
+	.ms365cal-tl-more{position:absolute;right:3px;z-index:1000;min-width:26px;height:24px;padding:0 7px;box-sizing:border-box;border:2px solid #fff;border-radius:999px;background:#d6336c;color:#fff;font-size:12px;font-weight:800;line-height:20px;cursor:pointer;text-align:center;text-transform:none;letter-spacing:normal;box-shadow:0 2px 6px rgba(0,0,0,.35);}
+	.ms365cal-tl-more:hover,.ms365cal-tl-more:focus-visible{background:#a61e4d;outline:2px solid rgba(255,255,255,.6);outline-offset:1px;}
 	/* Calendar mode: event-detail popup, opened by clicking a timeline event or a Month/all-day chip — those are small colour blocks with no room for List's inline accordion. A solid background is unavoidable here (unlike the rest of this plugin, which stays transparent to blend with the host theme) since a popup has to stay legible over arbitrary page content behind it; Canvas/CanvasText are the dark-mode-aware system colours for "page background/text", with a plain #fff/#1d2327 fallback for browsers that don't support them. */
 	.ms365cal-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;}
 	.ms365cal-modal{position:relative;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;background:#fff;background:Canvas;color:#1d2327;color:CanvasText;border-radius:12px;padding:28px 24px 24px;box-shadow:0 12px 40px rgba(0,0,0,.3);}
@@ -2772,9 +2771,8 @@ function ms365cal_assets() {
 		var retryTimer = null;
 		var throttleRetries = 0;
 		var MAX_THROTTLE_RETRIES = 3;
-		var openDetail = null;
 		var autoAdvanceChecked = false;                   // only skip an empty first week once
-		var calEvents = [];                               // events currently rendered in Calendar mode, for click-to-lookup by data-idx
+		var calEvents = [];                               // events currently rendered (List or Calendar mode), for click-to-lookup by data-idx
 		var clusterGroups = [];                           // groups of events behind a "+N" overflow badge, for click-to-lookup by data-cluster-idx
 		var currentModal = null;                          // the open event-detail popup, if any
 
@@ -2947,24 +2945,22 @@ function ms365cal_assets() {
 				}
 				var compactMetaLine=compactBits?'<div class="ms365cal-meta-line">'+compactBits+'</div>':'';
 
-				// No "when" line here \u2014 the start/end times stay visible in the left
-				// column (which stretches with the row) while expanded, so repeating
-				// them in the body would be redundant. No location either \u2014 it's on
-				// the always-visible meta line above.
-				// e.body is server-sanitised HTML (wp_kses, see ms365cal_sanitize_event_html())
-				// — injected as markup, not escaped, so real links keep their anchor text.
-				var d=buildDetailHtml(e);
-
+				// No "when" line here \u2014 the times are already in the left column.
+				// No location either \u2014 it's on the always-visible meta line above.
+				// A title with anything to show opens the same popup Calendar mode
+				// uses (buildDetailHtml()/loadBody() are shared, so lazy-body fetching
+				// works identically either way) instead of the old inline accordion.
 				// In lazy mode (cfg.lazyBody), e.hasBody comes from Graph's cheap
 				// bodyPreview field (see ms365cal_build_rows_from_page()) \u2014 known at
 				// list-fetch time, so an event with nothing to show (no body, no join
 				// link, no online/outlook line) renders as plain non-clickable text
 				// instead of an expand button that would do nothing.
-				var lazyOk=cfg.lazyBody&&e.id&&e.hasBody;
-				var lazyAttrs=lazyOk?' data-cal="'+escAttr(e.cal)+'" data-id="'+escAttr(e.id)+'" data-loaded="0"':'';
-				var showDetail=d||lazyOk;
+				var showDetail=buildDetailHtml(e)||(cfg.lazyBody&&e.id&&e.hasBody);
+				// data-idx indexes into calEvents, set to the currently-painted list
+				// at the top of paint() — same lookup mechanism the calendar-grid
+				// views use for their own popup.
 				var titleHtml=showDetail
-					?'<button type="button" class="ms365cal-ev" aria-expanded="false"><span class="ms365cal-title">'+esc(e.title)+'</span></button>'
+					?'<button type="button" class="ms365cal-ev" data-idx="'+calEvents.indexOf(e)+'"><span class="ms365cal-title">'+esc(e.title)+'</span></button>'
 					:'<div class="ms365cal-ev-static"><span class="ms365cal-title">'+esc(e.title)+'</span></div>';
 
 				// Expanded layout only: a short always-visible snippet of the body
@@ -2972,17 +2968,12 @@ function ms365cal_assets() {
 				// from_page() — so esc() here, not injected as markup like e.body).
 				var previewHtml=(layout==='expanded'&&e.preview)?'<div class="ms365cal-preview">'+esc(e.preview)+'</div>':'';
 
-				var detailHtml=showDetail?'<div class="ms365cal-detail"'+lazyAttrs+' hidden>'+d+'</div>':'';
-
 				// Compact wraps title+meta in their own nowrap flex line (.ms365cal-line)
 				// so the two can never wrap apart onto separate lines the way plain
-				// flex-wrapping siblings could — title ellipsises instead. Detail (only
-				// present once expanded) stays a sibling below it, same as the other
-				// layouts, so expanding still grows the row downward rather than
-				// replacing anything.
+				// flex-wrapping siblings could — title ellipsises instead.
 				var hbodyInner=(layout==='compact')
-					?('<div class="ms365cal-line">'+titleHtml+compactMetaLine+'</div>'+detailHtml)
-					:(titleHtml+previewHtml+detailHtml+metaLine);
+					?('<div class="ms365cal-line">'+titleHtml+compactMetaLine+'</div>')
+					:(titleHtml+previewHtml+metaLine);
 
 				html+='<div class="ms365cal-row">'
 					+'<div class="ms365cal-head">'
@@ -3003,15 +2994,17 @@ function ms365cal_assets() {
 		// start, group into connected overlap-clusters (a gap with nothing active
 		// breaks the group), then within each cluster give each event the first lane
 		// whose previous occupant has already ended, else a new lane. Rendering (below)
-		// turns laneIndex/laneCount into a cascade \u2014 not an equal width split, which
-		// on a busy day with many overlapping calendars shrank lanes to unreadable
-		// slivers \u2014 each lane offsetting right by CASCADE_STEP_PCT and layering on top
-		// of the previous ones, capped at CASCADE_MAX_STEP lanes deep. Every item in a
-		// cluster also gets clusterMembers (the full cluster's items), so the topmost
-		// lane can offer a "+N" overflow badge \u2014 a guaranteed, tap-friendly way to
-		// reach every event in the stack regardless of how deep the cascade covers
-		// them, since hover-to-reveal has no equivalent on touch devices.
-		var CASCADE_STEP_PCT=14,CASCADE_MAX_STEP=6;
+		// turns laneIndex/laneCount into a cascade for just the first CASCADE_VISIBLE_MAX
+		// lanes \u2014 not an equal width split (which on a busy day shrank lanes to
+		// unreadable slivers) and not an unbounded cascade either (which stayed
+		// technically readable but still looked cluttered once 6+ lanes stacked on a
+		// single busy day) \u2014 each visible lane offsetting right by CASCADE_STEP_PCT and
+		// layering on top of the previous ones. Anything beyond the cap isn't rendered
+		// as a box at all; every item in a cluster gets clusterMembers (the full
+		// cluster's items) so the last visible lane can offer a "+N more" overflow
+		// badge instead \u2014 a guaranteed, tap-friendly way to reach what isn't rendered,
+		// since hover-to-reveal has no equivalent on touch devices.
+		var CASCADE_STEP_PCT=32,CASCADE_VISIBLE_MAX=2;
 		function layoutLanes(items){
 			items.sort(function(a,b){return a.start-b.start;});
 			var i=0;
@@ -3133,16 +3126,28 @@ function ms365cal_assets() {
 					if(it.end.getDate()!==it.start.getDate()||endMin<=startMin)endMin=24*60;
 					var top=((startMin-rangeStartMin)/60)*HOUR_PX;
 					var height=Math.max(18,((endMin-startMin)/60)*HOUR_PX);
-					var stepIdx=Math.min(it.laneIndex,CASCADE_MAX_STEP),leftPct=stepIdx*CASCADE_STEP_PCT;
+					// Only the first CASCADE_VISIBLE_MAX lanes render as boxes at all —
+					// a busy day with many calendars enabled could otherwise still stack
+					// 6+ slivers deep and read as cluttered even once each one is
+					// individually readable. Anything beyond the cap isn't rendered as a
+					// box at all (not just hidden underneath one), and the badge below
+					// counts exactly what it replaces rather than the cluster's total.
+					if(it.laneIndex>=CASCADE_VISIBLE_MAX)return;
+					var leftPct=it.laneIndex*CASCADE_STEP_PCT;
 					html+='<button type="button" class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+';background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'"><span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span></button>';
-					// The topmost (fully visible) lane of an overlapping cluster gets a
-					// small "+N" badge — a guaranteed, tap-friendly way to reach every
-					// event stacked underneath, since a covered event may receive zero
-					// pointer events at all once another lane is drawn fully on top of it.
-					if(it.laneCount>1&&it.laneIndex===it.laneCount-1){
+					// The last visible lane of a cluster that overflows the cap gets a
+					// "+N more" badge — a guaranteed, tap-friendly way to reach the
+					// events that aren't rendered at all, since hover has no touch
+					// equivalent and a covered box would receive zero pointer events
+					// regardless of device.
+					if(it.laneCount>CASCADE_VISIBLE_MAX&&it.laneIndex===CASCADE_VISIBLE_MAX-1){
+						// clusterMembers is sorted by start time, not by lane assignment,
+						// so "the hidden ones" isn't just the tail of the array — filter on
+						// laneIndex itself to get exactly what isn't already rendered above.
+						var hidden=it.clusterMembers.filter(function(x){return x.laneIndex>=CASCADE_VISIBLE_MAX;});
 						var cidx=clusterGroups.length;
-						clusterGroups.push(it.clusterMembers.map(function(x){return x.ev;}));
-						html+='<button type="button" class="ms365cal-tl-more" style="top:'+top+'px;" data-cluster-idx="'+cidx+'" aria-label="'+it.clusterMembers.length+' händelser i denna period">'+it.clusterMembers.length+'</button>';
+						clusterGroups.push(hidden.map(function(x){return x.ev;}));
+						html+='<button type="button" class="ms365cal-tl-more" style="top:'+top+'px;" data-cluster-idx="'+cidx+'" aria-label="'+hidden.length+' tilläggshändelser i denna period">+'+hidden.length+'</button>';
 					}
 				});
 				html+='</div>';
@@ -3209,7 +3214,6 @@ function ms365cal_assets() {
 		}
 
 		function paint(){
-			openDetail=null;
 			var events=cache[winKey()]||[];
 			var visible=events.filter(function(e){return enabled[e.cal];});
 			if(mode==='calendar'){
@@ -3221,6 +3225,7 @@ function ms365cal_assets() {
 				listEl.innerHTML='<p class="ms365cal-empty">Inga h\u00e4ndelser den h\u00e4r veckan.</p>';
 				return;
 			}
+			calEvents=visible;
 			// Events pinned to today but actually started before this window (a
 			// still-running event from an earlier week) get pulled into their own
 			// section above the day list instead of blending into today's day
@@ -3249,9 +3254,10 @@ function ms365cal_assets() {
 			listEl.innerHTML=html;
 		}
 
-		// Lazy body fetch (cfg.lazyBody): the detail already carries data-cal/data-id
-		// from renderDays(); this is called once per event, the first time it's
-		// expanded, guarded by data-loaded so a rapid close/reopen doesn't refetch.
+		// Lazy body fetch (cfg.lazyBody): the detail container already carries
+		// data-cal/data-id, set by openEventModal() for List and Calendar mode alike;
+		// this is called once per event, the first time its popup opens, guarded by
+		// data-loaded so a rapid close/reopen doesn't refetch.
 		function loadBody(detail){
 			var cal=detail.getAttribute('data-cal'),id=detail.getAttribute('data-id');
 			detail.setAttribute('data-loaded','1');
@@ -3277,43 +3283,28 @@ function ms365cal_assets() {
 				.catch(function(){loading.remove();});
 		}
 
-		// Expand/collapse: accordion for events (one open at a time); independent
-		// toggle for the "Tidigare Händelser" group.
+		// Independent toggle for the "Tidigare Händelser" group (unrelated to any
+		// event popup, just collapses/expands the past-days section).
 		listEl.addEventListener('click',function(ev){
 			var tog=ev.target.closest('.ms365cal-earlier-tog');
-			if(tog&&listEl.contains(tog)){
-				var eb=tog.parentNode.querySelector('.ms365cal-earlier-body');
-				var op=tog.getAttribute('aria-expanded')==='true';
-				tog.setAttribute('aria-expanded',op?'false':'true');
-				if(eb)eb.hidden=op;
-				return;
-			}
-			var btn=ev.target.closest('.ms365cal-ev');
-			if(!btn||!listEl.contains(btn))return;
-			var row=btn.closest('.ms365cal-row');
-			var detail=row?row.querySelector('.ms365cal-detail'):null;
-			if(!detail)return;
-			if(openDetail===detail){
-				detail.hidden=true;btn.setAttribute('aria-expanded','false');openDetail=null;return;
-			}
-			if(openDetail){
-				openDetail.hidden=true;
-				var prow=openDetail.closest('.ms365cal-row');
-				var prev=prow?prow.querySelector('.ms365cal-ev'):null;
-				if(prev)prev.setAttribute('aria-expanded','false');
-			}
-			detail.hidden=false;btn.setAttribute('aria-expanded','true');openDetail=detail;
-			if(detail.getAttribute('data-loaded')==='0')loadBody(detail);
+			if(!tog||!listEl.contains(tog))return;
+			var eb=tog.parentNode.querySelector('.ms365cal-earlier-body');
+			var op=tog.getAttribute('aria-expanded')==='true';
+			tog.setAttribute('aria-expanded',op?'false':'true');
+			if(eb)eb.hidden=op;
 		});
 
-		// Calendar mode: clicking an event block/chip (Day/Week timeline, Month
-		// grid, or the all-day strip) opens the popup instead of an inline
-		// accordion — there's no room in a small colour block for List's expand-
-		// in-place treatment. data-idx indexes into calEvents, set fresh by
-		// renderTimeline()/renderMonth() on every paint(). A "+N" overflow badge
-		// (data-cluster-idx into clusterGroups) opens the pick-list modal instead —
-		// checked first since it's a plain sibling of the events it overflows, not a
-		// descendant, so there's no risk of it also matching the event selector.
+		// Clicking an event — a List row's title (.ms365cal-ev), a Calendar-mode
+		// block/chip (Day/Week timeline, Month grid, or the all-day strip) — opens
+		// the same popup. List used to expand an inline accordion instead; the
+		// calendar-grid views never had room for that in a small colour block, and
+		// once both share one popup there's a single, consistent place all detail
+		// rendering (buildDetailHtml()/loadBody()) lives instead of two. data-idx
+		// indexes into calEvents, set fresh on every paint()/renderTimeline()/
+		// renderMonth(). A "+N" overflow badge (data-cluster-idx into clusterGroups)
+		// opens the pick-list modal instead — checked first since it's a plain
+		// sibling of the events it overflows, not a descendant, so there's no risk
+		// of it also matching the event selector.
 		listEl.addEventListener('click',function(ev){
 			var moreEl=ev.target.closest('.ms365cal-tl-more,.ms365cal-month-more');
 			if(moreEl&&listEl.contains(moreEl)){
@@ -3321,7 +3312,7 @@ function ms365cal_assets() {
 				if(!isNaN(cidx)&&clusterGroups[cidx])openEventListModal(clusterGroups[cidx]);
 				return;
 			}
-			var el=ev.target.closest('.ms365cal-tl-event,.ms365cal-tl-chip,.ms365cal-month-chip');
+			var el=ev.target.closest('.ms365cal-ev,.ms365cal-tl-event,.ms365cal-tl-chip,.ms365cal-month-chip');
 			if(!el||!listEl.contains(el))return;
 			var idx=parseInt(el.getAttribute('data-idx'),10);
 			if(isNaN(idx)||!calEvents[idx])return;
@@ -3378,7 +3369,6 @@ function ms365cal_assets() {
 			if(cache[key]){paint();return;}          // client-side window cache hit
 
 			var my=++reqId;
-			openDetail=null;
 			listEl.classList.remove('is-loading');
 			// Clear the previous week immediately and show a loading indicator, rather
 			// than leaving stale events on screen until the new window arrives.
