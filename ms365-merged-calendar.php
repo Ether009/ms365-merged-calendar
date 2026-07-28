@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.24.0
+ * Version:           2.25.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2548,7 +2548,6 @@ function ms365cal_assets() {
 	.ms365cal-tl-event.ms365cal-tl-event--front{z-index:999!important;box-shadow:0 4px 14px rgba(0,0,0,.35);}
 	.ms365cal-tl-event.ms365cal-tl-event--wide{width:auto!important;max-width:260px;}
 	.ms365cal-tl-ev-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
-	.ms365cal-tl-event--has-badge .ms365cal-tl-ev-title{padding-right:34px;}
 	/* Calendar mode: Month grid (read-only — no drill-down yet). */
 	.ms365cal-month-head{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:2px;}
 	.ms365cal-month-hcell{text-align:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;opacity:.55;padding:4px 0;}
@@ -2561,8 +2560,7 @@ function ms365cal_assets() {
 	.ms365cal-month-chip:hover,.ms365cal-month-chip:focus-visible{filter:brightness(.9);outline:2px solid rgba(255,255,255,.6);outline-offset:-2px;}
 	.ms365cal-month-more{display:block;width:100%;border:none;background:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;font-size:10px;opacity:.6;padding:0;color:inherit;}
 	.ms365cal-month-more:hover,.ms365cal-month-more:focus-visible{opacity:1;text-decoration:underline;}
-	.ms365cal-tl-more{position:absolute;right:2px;z-index:1000;min-width:26px;height:22px;padding:0 6px;box-sizing:border-box;border:2px solid #fff;border-radius:999px;background:#d6336c;color:#fff;font-size:11px;font-weight:800;line-height:18px;cursor:pointer;text-align:center;text-transform:none;letter-spacing:normal;box-shadow:0 2px 6px rgba(0,0,0,.35);}
-	.ms365cal-tl-more:hover,.ms365cal-tl-more:focus-visible{background:#a61e4d;outline:2px solid rgba(255,255,255,.6);outline-offset:1px;}
+	.ms365cal-tl-event.ms365cal-tl-more{background:#495057;font-weight:600;}
 	/* Calendar mode: event-detail popup, opened by clicking a timeline event or a Month/all-day chip — those are small colour blocks with no room for List's inline accordion. A solid background is unavoidable here (unlike the rest of this plugin, which stays transparent to blend with the host theme) since a popup has to stay legible over arbitrary page content behind it; Canvas/CanvasText are the dark-mode-aware system colours for "page background/text", with a plain #fff/#1d2327 fallback for browsers that don't support them. */
 	.ms365cal-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;}
 	.ms365cal-modal{position:relative;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;background:#fff;background:Canvas;color:#1d2327;color:CanvasText;border-radius:12px;padding:28px 24px 24px;box-shadow:0 12px 40px rgba(0,0,0,.3);}
@@ -3001,26 +2999,21 @@ function ms365cal_assets() {
 		// unbounded cascade either (which stayed technically readable but still
 		// looked cluttered once 6+ lanes stacked on a single busy day) \u2014 each visible
 		// lane offsetting right by CASCADE_STEP_PCT and layering on top of the
-		// previous ones. Anything beyond the cap isn't rendered as a box at all;
-		// every item in a cluster gets clusterMembers (the full cluster's items) so
-		// the last visible lane can offer a "+N more" overflow badge instead \u2014 a
-		// guaranteed, tap-friendly way to reach what isn't rendered, since
-		// hover-to-reveal has no equivalent on touch devices.
-		var CASCADE_STEP_PCT=32;
-		// How many lanes to cascade before folding the rest into a badge, based on
-		// how many days are in view \u2014 a proxy for how wide each day column actually
-		// is (measuring real rendered width would need a second pass after insertion,
-		// which isn't worth the complexity/flicker here). Measured live: a 7-day Week
-		// column can be as narrow as 64px in a sidebar-constrained layout, where even
-		// a 2-lane cascade read as cramped and repetitive (a badge on every busy day,
-		// each squeezed to a sliver); a 1-day Day column was 448px, plenty of room
-		// for several. Week/Workweek collapse to a single visible lane \u2014 no cascade
-		// stepping at all, just "the one event, plus a badge for the rest" \u2014 since
-		// hover (bring-to-front/widen) already covers the "let me peek" need on
-		// desktop, and the badge covers guaranteed reachability on touch; neither
-		// needs a multi-lane cascade to still work.
+		// previous ones.
+		var CASCADE_STEP_PCT=22;
+		// How many lanes to cascade before folding the rest into one "+N fler" box,
+		// based on how many days are in view \u2014 a proxy for how wide each day column
+		// actually is (measuring real rendered width would need a second pass after
+		// insertion, which isn't worth the complexity/flicker here). Per explicit
+		// request: keep at least 3, ideally 4, real events visible rather than
+		// collapsing down to "just the one event, plus a badge for the rest" \u2014 an
+		// earlier version did exactly that for Week/Workweek specifically (reasoning
+		// that those columns can be very narrow, e.g. 64px measured live on a
+		// sidebar-constrained layout) and it read as showing *less* real information
+		// than the user wanted, not as calmer. Day/3-day still get one lane more than
+		// Week/Workweek, since they do have more room, but neither collapses this low.
 		function cascadeVisibleMax(numDays){
-			return numDays<=3?3:1;
+			return numDays<=3?4:3;
 		}
 		function layoutLanes(items){
 			items.sort(function(a,b){return a.start-b.start;});
@@ -3138,52 +3131,53 @@ function ms365cal_assets() {
 			dayCols.forEach(function(col){
 				html+='<div class="ms365cal-tl-daycol'+(col.key===todayKey?' is-today':'')+'">';
 				var badgedClusters=[];
-				// Reserving title padding only within the cluster that actually
-				// overflows isn't enough — a badge can still land close enough to an
-				// *adjacent* (temporally separate, non-overlapping) cluster's box to
-				// clip its text too, since every visible lane always extends to the
-				// column's shared right edge regardless of which cluster it belongs
-				// to (confirmed live: an event from a neighbouring cluster still had
-				// real, unpadded text reaching into a badge's rect). Scoping the
-				// reservation to the whole day column sidesteps needing to reason
-				// about cross-cluster adjacency at all — if this day has any overflow
-				// badge anywhere, every visible event in it reserves the space.
-				var dayHasBadge=col.timed.some(function(x){return x.laneIndex<CASCADE_VISIBLE_MAX&&x.laneCount>CASCADE_VISIBLE_MAX;});
 				col.timed.forEach(function(it){
 					var m=cfg.meta[it.ev.cal];if(!m)return;
+					if(it.laneIndex>=CASCADE_VISIBLE_MAX)return;
+					var overflowing=it.laneCount>CASCADE_VISIBLE_MAX;
+					var leftPct=it.laneIndex*CASCADE_STEP_PCT;
+					// The last visible lane of an overflowing cluster doesn't render
+					// this specific event as its own box — instead the whole lane is
+					// replaced by one "+N fler" box representing everything at or past
+					// it, built once per cluster (below) rather than per occurrence. It
+					// occupies its own dedicated lane slot with the exact same geometry
+					// math as a real event, styled the same way (same class, just a
+					// neutral colour instead of a specific calendar's) — not a floating
+					// overlay button — so it reads as one more item in the timeline
+					// rather than a decoration bolted on top of one. That also means it
+					// can never overlap another box's text: it has its own slot, the
+					// same guarantee every other lane already has.
+					if(overflowing&&it.laneIndex===CASCADE_VISIBLE_MAX-1){
+						if(badgedClusters.indexOf(it.clusterMembers)===-1){
+							badgedClusters.push(it.clusterMembers);
+							// clusterMembers is sorted by start time, not by lane
+							// assignment, so "what this box replaces" isn't just the
+							// array's tail — filter on laneIndex itself, then span the
+							// box across the full time range of everything it replaces
+							// (not just the one occurrence that happened to trigger
+							// this) so it reads as "busy from here to there", not a
+							// single instant.
+							var hidden=it.clusterMembers.filter(function(x){return x.laneIndex>=CASCADE_VISIBLE_MAX-1;});
+							var hiddenStartMin=Math.min.apply(null,hidden.map(function(x){return x.start.getHours()*60+x.start.getMinutes();}));
+							var hiddenEndMin=Math.max.apply(null,hidden.map(function(x){
+								var sm=x.start.getHours()*60+x.start.getMinutes();
+								var em=x.end.getHours()*60+x.end.getMinutes();
+								return (x.end.getDate()!==x.start.getDate()||em<=sm)?24*60:em;
+							}));
+							var moreTop=((hiddenStartMin-rangeStartMin)/60)*HOUR_PX;
+							var moreHeight=Math.max(18,((hiddenEndMin-hiddenStartMin)/60)*HOUR_PX);
+							var cidx=clusterGroups.length;
+							clusterGroups.push(hidden.map(function(x){return x.ev;}));
+							html+='<button type="button" class="ms365cal-tl-event ms365cal-tl-more" style="top:'+moreTop+'px;height:'+moreHeight+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+'" data-cluster-idx="'+cidx+'" aria-label="'+hidden.length+' tilläggshändelser i denna period"><span class="ms365cal-tl-ev-title">+'+hidden.length+' fler</span></button>';
+						}
+						return;
+					}
 					var startMin=it.start.getHours()*60+it.start.getMinutes();
 					var endMin=it.end.getHours()*60+it.end.getMinutes();
 					if(it.end.getDate()!==it.start.getDate()||endMin<=startMin)endMin=24*60;
 					var top=((startMin-rangeStartMin)/60)*HOUR_PX;
 					var height=Math.max(18,((endMin-startMin)/60)*HOUR_PX);
-					// Only the first CASCADE_VISIBLE_MAX lanes render as boxes at all —
-					// a busy day with many calendars enabled could otherwise still stack
-					// 6+ slivers deep and read as cluttered even once each one is
-					// individually readable. Anything beyond the cap isn't rendered as a
-					// box at all (not just hidden underneath one), and the badge below
-					// counts exactly what it replaces rather than the cluster's total.
-					if(it.laneIndex>=CASCADE_VISIBLE_MAX)return;
-					var leftPct=it.laneIndex*CASCADE_STEP_PCT;
-					html+='<button type="button" class="ms365cal-tl-event'+(dayHasBadge?' ms365cal-tl-event--has-badge':'')+'" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+';background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'"><span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span></button>';
-					// A "cluster" from layoutLanes() can chain many small overlaps
-					// together across a whole busy stretch of the day (any touching/
-					// overlapping run), so multiple *different* events can each
-					// independently land in the last visible lane at their own start
-					// time — badgedClusters (by clusterMembers reference, unique per
-					// cluster) keeps the badge button itself down to exactly one per
-					// cluster instead of one per occurrence (the padding reservation
-					// above is scoped to the whole day, not just this cluster, so it
-					// doesn't need this same dedup).
-					if(it.laneCount>CASCADE_VISIBLE_MAX&&it.laneIndex===CASCADE_VISIBLE_MAX-1&&badgedClusters.indexOf(it.clusterMembers)===-1){
-						badgedClusters.push(it.clusterMembers);
-						// clusterMembers is sorted by start time, not by lane assignment,
-						// so "the hidden ones" isn't just the tail of the array — filter on
-						// laneIndex itself to get exactly what isn't already rendered above.
-						var hidden=it.clusterMembers.filter(function(x){return x.laneIndex>=CASCADE_VISIBLE_MAX;});
-						var cidx=clusterGroups.length;
-						clusterGroups.push(hidden.map(function(x){return x.ev;}));
-						html+='<button type="button" class="ms365cal-tl-more" style="top:'+top+'px;" data-cluster-idx="'+cidx+'" aria-label="'+hidden.length+' tilläggshändelser i denna period">+'+hidden.length+'</button>';
-					}
+					html+='<button type="button" class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+';background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'"><span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span></button>';
 				});
 				html+='</div>';
 			});
