@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.23.3
+ * Version:           2.24.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2995,17 +2995,33 @@ function ms365cal_assets() {
 		// start, group into connected overlap-clusters (a gap with nothing active
 		// breaks the group), then within each cluster give each event the first lane
 		// whose previous occupant has already ended, else a new lane. Rendering (below)
-		// turns laneIndex/laneCount into a cascade for just the first CASCADE_VISIBLE_MAX
-		// lanes \u2014 not an equal width split (which on a busy day shrank lanes to
-		// unreadable slivers) and not an unbounded cascade either (which stayed
-		// technically readable but still looked cluttered once 6+ lanes stacked on a
-		// single busy day) \u2014 each visible lane offsetting right by CASCADE_STEP_PCT and
-		// layering on top of the previous ones. Anything beyond the cap isn't rendered
-		// as a box at all; every item in a cluster gets clusterMembers (the full
-		// cluster's items) so the last visible lane can offer a "+N more" overflow
-		// badge instead \u2014 a guaranteed, tap-friendly way to reach what isn't rendered,
-		// since hover-to-reveal has no equivalent on touch devices.
-		var CASCADE_STEP_PCT=32,CASCADE_VISIBLE_MAX=2;
+		// turns laneIndex/laneCount into a cascade for just the first N visible lanes
+		// (N set per render \u2014 see cascadeVisibleMax() below) \u2014 not an equal width
+		// split (which on a busy day shrank lanes to unreadable slivers) and not an
+		// unbounded cascade either (which stayed technically readable but still
+		// looked cluttered once 6+ lanes stacked on a single busy day) \u2014 each visible
+		// lane offsetting right by CASCADE_STEP_PCT and layering on top of the
+		// previous ones. Anything beyond the cap isn't rendered as a box at all;
+		// every item in a cluster gets clusterMembers (the full cluster's items) so
+		// the last visible lane can offer a "+N more" overflow badge instead \u2014 a
+		// guaranteed, tap-friendly way to reach what isn't rendered, since
+		// hover-to-reveal has no equivalent on touch devices.
+		var CASCADE_STEP_PCT=32;
+		// How many lanes to cascade before folding the rest into a badge, based on
+		// how many days are in view \u2014 a proxy for how wide each day column actually
+		// is (measuring real rendered width would need a second pass after insertion,
+		// which isn't worth the complexity/flicker here). Measured live: a 7-day Week
+		// column can be as narrow as 64px in a sidebar-constrained layout, where even
+		// a 2-lane cascade read as cramped and repetitive (a badge on every busy day,
+		// each squeezed to a sliver); a 1-day Day column was 448px, plenty of room
+		// for several. Week/Workweek collapse to a single visible lane \u2014 no cascade
+		// stepping at all, just "the one event, plus a badge for the rest" \u2014 since
+		// hover (bring-to-front/widen) already covers the "let me peek" need on
+		// desktop, and the badge covers guaranteed reachability on touch; neither
+		// needs a multi-lane cascade to still work.
+		function cascadeVisibleMax(numDays){
+			return numDays<=3?3:1;
+		}
 		function layoutLanes(items){
 			items.sort(function(a,b){return a.start-b.start;});
 			var i=0;
@@ -3039,6 +3055,7 @@ function ms365cal_assets() {
 		function renderTimeline(events,numDays){
 			calEvents=events;
 			clusterGroups=[];
+			var CASCADE_VISIBLE_MAX=cascadeVisibleMax(numDays);
 			var HOUR_PX=48;
 			var dayCols=[];
 			for(var i=0;i<numDays;i++){
