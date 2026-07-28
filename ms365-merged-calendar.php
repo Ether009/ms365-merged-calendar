@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.23.0
+ * Version:           2.23.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -3119,6 +3119,7 @@ function ms365cal_assets() {
 			html+='</div><div class="ms365cal-tl-grid" style="height:'+((rangeEndHour-rangeStartHour)*HOUR_PX)+'px">';
 			dayCols.forEach(function(col){
 				html+='<div class="ms365cal-tl-daycol'+(col.key===todayKey?' is-today':'')+'">';
+				var badgedClusters=[];
 				col.timed.forEach(function(it){
 					var m=cfg.meta[it.ev.cal];if(!m)return;
 					var startMin=it.start.getHours()*60+it.start.getMinutes();
@@ -3135,12 +3136,20 @@ function ms365cal_assets() {
 					if(it.laneIndex>=CASCADE_VISIBLE_MAX)return;
 					var leftPct=it.laneIndex*CASCADE_STEP_PCT;
 					html+='<button type="button" class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+';background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'"><span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span></button>';
-					// The last visible lane of a cluster that overflows the cap gets a
-					// "+N more" badge — a guaranteed, tap-friendly way to reach the
-					// events that aren't rendered at all, since hover has no touch
-					// equivalent and a covered box would receive zero pointer events
-					// regardless of device.
-					if(it.laneCount>CASCADE_VISIBLE_MAX&&it.laneIndex===CASCADE_VISIBLE_MAX-1){
+					// The cluster's first eligible visible lane gets a single "+N more"
+					// badge — a guaranteed, tap-friendly way to reach the events that
+					// aren't rendered at all, since hover has no touch equivalent and a
+					// covered box would receive zero pointer events regardless of
+					// device. A "cluster" from layoutLanes() can chain many small
+					// overlaps together across a whole busy stretch of the day (any
+					// touching/overlapping run), so multiple *different* events can each
+					// independently land in the last visible lane at their own start
+					// time — badgedClusters (by clusterMembers reference, unique per
+					// cluster) keeps that down to exactly one badge per cluster instead
+					// of one per occurrence, which otherwise repeated the same "+N"
+					// several times down the column.
+					if(it.laneCount>CASCADE_VISIBLE_MAX&&it.laneIndex===CASCADE_VISIBLE_MAX-1&&badgedClusters.indexOf(it.clusterMembers)===-1){
+						badgedClusters.push(it.clusterMembers);
 						// clusterMembers is sorted by start time, not by lane assignment,
 						// so "the hidden ones" isn't just the tail of the array — filter on
 						// laneIndex itself to get exactly what isn't already rendered above.
