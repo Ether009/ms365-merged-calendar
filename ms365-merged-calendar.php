@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.25.0
+ * Version:           2.26.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -3000,12 +3000,12 @@ function ms365cal_assets() {
 		// looked cluttered once 6+ lanes stacked on a single busy day) \u2014 each visible
 		// lane offsetting right by CASCADE_STEP_PCT and layering on top of the
 		// previous ones.
-		var CASCADE_STEP_PCT=22;
-		// How many lanes to cascade before folding the rest into one "+N fler" box,
+		var CASCADE_STEP_PCT=18;
+		// How many lanes to cascade before folding the rest into "+N fler" box(es),
 		// based on how many days are in view \u2014 a proxy for how wide each day column
 		// actually is (measuring real rendered width would need a second pass after
 		// insertion, which isn't worth the complexity/flicker here). Per explicit
-		// request: keep at least 3, ideally 4, real events visible rather than
+		// request: keep as many real events visible as reasonably fit rather than
 		// collapsing down to "just the one event, plus a badge for the rest" \u2014 an
 		// earlier version did exactly that for Week/Workweek specifically (reasoning
 		// that those columns can be very narrow, e.g. 64px measured live on a
@@ -3013,7 +3013,7 @@ function ms365cal_assets() {
 		// than the user wanted, not as calmer. Day/3-day still get one lane more than
 		// Week/Workweek, since they do have more room, but neither collapses this low.
 		function cascadeVisibleMax(numDays){
-			return numDays<=3?4:3;
+			return numDays<=3?5:4;
 		}
 		function layoutLanes(items){
 			items.sort(function(a,b){return a.start-b.start;});
@@ -3128,6 +3128,11 @@ function ms365cal_assets() {
 			html+='<div class="ms365cal-tl-body"><div class="ms365cal-tl-axis">';
 			for(var h=rangeStartHour;h<rangeEndHour;h++)html+='<div class="ms365cal-tl-hour">'+pad(h)+':00</div>';
 			html+='</div><div class="ms365cal-tl-grid" style="height:'+((rangeEndHour-rangeStartHour)*HOUR_PX)+'px">';
+			function endMinOf(x){
+				var sm=x.start.getHours()*60+x.start.getMinutes();
+				var em=x.end.getHours()*60+x.end.getMinutes();
+				return (x.end.getDate()!==x.start.getDate()||em<=sm)?24*60:em;
+			}
 			dayCols.forEach(function(col){
 				html+='<div class="ms365cal-tl-daycol'+(col.key===todayKey?' is-today':'')+'">';
 				var badgedClusters=[];
@@ -3137,46 +3142,54 @@ function ms365cal_assets() {
 					var overflowing=it.laneCount>CASCADE_VISIBLE_MAX;
 					var leftPct=it.laneIndex*CASCADE_STEP_PCT;
 					// The last visible lane of an overflowing cluster doesn't render
-					// this specific event as its own box — instead the whole lane is
-					// replaced by one "+N fler" box representing everything at or past
-					// it, built once per cluster (below) rather than per occurrence. It
-					// occupies its own dedicated lane slot with the exact same geometry
-					// math as a real event, styled the same way (same class, just a
-					// neutral colour instead of a specific calendar's) — not a floating
-					// overlay button — so it reads as one more item in the timeline
-					// rather than a decoration bolted on top of one. That also means it
-					// can never overlap another box's text: it has its own slot, the
-					// same guarantee every other lane already has.
+					// this specific event as its own box — instead everything at or
+					// past it is split into "+N fler" box(es), computed once per
+					// cluster (below) rather than per occurrence, but potentially
+					// emitting *several* boxes, not one. A single box spanning the
+					// cluster's entire time range read as "busy from here to there"
+					// even across long stretches where nothing was actually hidden at
+					// that moment — instead, the hidden subset is re-grouped by its own
+					// actual overlap (the same connected-touching-or-overlapping
+					// technique layoutLanes() itself uses, just applied to only the
+					// overflow members), so each box is tightly scoped to when — and
+					// exactly what — is genuinely hidden right then. Each box occupies
+					// its own dedicated lane slot with the exact same geometry math as
+					// a real event, styled the same way (same class, just a neutral
+					// colour instead of a specific calendar's) — not a floating overlay
+					// button — so it reads as more items in the timeline rather than a
+					// decoration bolted on top of one, and can never overlap another
+					// box's text since it has its own slot like any other lane.
 					if(overflowing&&it.laneIndex===CASCADE_VISIBLE_MAX-1){
 						if(badgedClusters.indexOf(it.clusterMembers)===-1){
 							badgedClusters.push(it.clusterMembers);
 							// clusterMembers is sorted by start time, not by lane
-							// assignment, so "what this box replaces" isn't just the
-							// array's tail — filter on laneIndex itself, then span the
-							// box across the full time range of everything it replaces
-							// (not just the one occurrence that happened to trigger
-							// this) so it reads as "busy from here to there", not a
-							// single instant.
+							// assignment, so "what's hidden" isn't just the array's
+							// tail — filter on laneIndex itself first.
 							var hidden=it.clusterMembers.filter(function(x){return x.laneIndex>=CASCADE_VISIBLE_MAX-1;});
-							var hiddenStartMin=Math.min.apply(null,hidden.map(function(x){return x.start.getHours()*60+x.start.getMinutes();}));
-							var hiddenEndMin=Math.max.apply(null,hidden.map(function(x){
-								var sm=x.start.getHours()*60+x.start.getMinutes();
-								var em=x.end.getHours()*60+x.end.getMinutes();
-								return (x.end.getDate()!==x.start.getDate()||em<=sm)?24*60:em;
-							}));
-							var moreTop=((hiddenStartMin-rangeStartMin)/60)*HOUR_PX;
-							var moreHeight=Math.max(18,((hiddenEndMin-hiddenStartMin)/60)*HOUR_PX);
-							var cidx=clusterGroups.length;
-							clusterGroups.push(hidden.map(function(x){return x.ev;}));
-							html+='<button type="button" class="ms365cal-tl-event ms365cal-tl-more" style="top:'+moreTop+'px;height:'+moreHeight+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+'" data-cluster-idx="'+cidx+'" aria-label="'+hidden.length+' tilläggshändelser i denna period"><span class="ms365cal-tl-ev-title">+'+hidden.length+' fler</span></button>';
+							var hi=0;
+							while(hi<hidden.length){
+								var subEnd=endMinOf(hidden[hi]);
+								var hj=hi+1;
+								while(hj<hidden.length&&(hidden[hj].start.getHours()*60+hidden[hj].start.getMinutes())<subEnd){
+									var hjEnd=endMinOf(hidden[hj]);
+									if(hjEnd>subEnd)subEnd=hjEnd;
+									hj++;
+								}
+								var sub=hidden.slice(hi,hj);
+								var subStartMin=sub[0].start.getHours()*60+sub[0].start.getMinutes();
+								var moreTop=((subStartMin-rangeStartMin)/60)*HOUR_PX;
+								var moreHeight=Math.max(18,((subEnd-subStartMin)/60)*HOUR_PX);
+								var cidx=clusterGroups.length;
+								clusterGroups.push(sub.map(function(x){return x.ev;}));
+								html+='<button type="button" class="ms365cal-tl-event ms365cal-tl-more" style="top:'+moreTop+'px;height:'+moreHeight+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+'" data-cluster-idx="'+cidx+'" aria-label="'+sub.length+' tilläggshändelser i denna period"><span class="ms365cal-tl-ev-title">+'+sub.length+' fler</span></button>';
+								hi=hj;
+							}
 						}
 						return;
 					}
 					var startMin=it.start.getHours()*60+it.start.getMinutes();
-					var endMin=it.end.getHours()*60+it.end.getMinutes();
-					if(it.end.getDate()!==it.start.getDate()||endMin<=startMin)endMin=24*60;
 					var top=((startMin-rangeStartMin)/60)*HOUR_PX;
-					var height=Math.max(18,((endMin-startMin)/60)*HOUR_PX);
+					var height=Math.max(18,((endMinOf(it)-startMin)/60)*HOUR_PX);
 					html+='<button type="button" class="ms365cal-tl-event" style="top:'+top+'px;height:'+height+'px;left:'+leftPct+'%;width:calc(100% - '+leftPct+'%);z-index:'+(it.laneIndex+1)+';background:'+m.primary+'" title="'+escAttr(it.ev.title)+'" data-idx="'+events.indexOf(it.ev)+'"><span class="ms365cal-tl-ev-title">'+esc(it.ev.title)+'</span></button>';
 				});
 				html+='</div>';
