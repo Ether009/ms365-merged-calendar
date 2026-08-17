@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.30.2
+ * Version:           2.30.3
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2534,7 +2534,7 @@ function ms365cal_assets() {
 	.ms365cal-recurring-filter{display:inline-flex;align-items:center;gap:6px;margin-left:6px;padding:5px 12px;border:1px solid var(--ms-line);border-radius:999px;background:transparent;color:inherit;opacity:.75;cursor:pointer;white-space:nowrap;transition:background .15s,opacity .15s;}
 	.ms365cal-recurring-filter:hover{background:var(--ms-soft);opacity:1;}
 	.ms365cal-recurring-filter input{margin:0;width:12px;height:12px;flex:0 0 auto;}
-	.ms365cal-recurring-filter span{font-size:12px;font-weight:700;line-height:1.5;text-transform:uppercase;letter-spacing:.04em;}
+	.ms365cal-recurring-filter span{font-size:12px;font-weight:700;line-height:1.5;text-transform:uppercase;letter-spacing:.04em;position:relative;top:-1px;}
 	.ms365cal-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;}
 	.ms365cal-chip{display:inline-flex;align-items:center;gap:7px;font-size:13px;padding:6px 13px;border-radius:999px;cursor:pointer;border:1px solid var(--ms-line);background:transparent;color:inherit;opacity:.5;transition:opacity .15s,border-color .15s,background .15s,color .15s;}
 	.ms365cal-chip:hover{opacity:.8;}
