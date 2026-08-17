@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.30.5
+ * Version:           2.31.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2579,7 +2579,7 @@ function ms365cal_assets() {
 	.ms365cal-row{border-radius:12px;padding:0 12px;transition:background .12s;}
 	.ms365cal-row:hover{background:var(--ms-soft);}
 	.ms365cal-head{display:flex;align-items:stretch;gap:10px;}
-	.ms365cal-times{flex:0 0 auto;width:82px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;text-align:right;padding:10px 0;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.25;}
+	.ms365cal-times{flex:0 0 auto;width:123px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;text-align:right;padding:10px 0;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.25;}
 	.ms365cal-t1{font-weight:600;opacity:.85;}
 	.ms365cal-t2{opacity:.5;}
 	.ms365cal-cat{display:inline-block;font-size:11px;font-weight:600;line-height:1.2;overflow-wrap:break-word;max-width:100%;padding:3px 8px;border-radius:999px;}
@@ -2592,6 +2592,7 @@ function ms365cal_assets() {
 	.ms365cal-caret{display:inline-block;flex:0 0 auto;font-size:9px;opacity:.4;transition:transform .15s;}
 	.ms365cal-meta-line{margin-top:auto;padding-top:8px;display:flex;align-items:center;gap:10px;font-size:12px;opacity:.6;}
 	.ms365cal-loc-line{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	.ms365cal-loc-pin{display:none;}
 	.ms365cal-recur-line{flex:0 0 auto;margin-left:auto;white-space:nowrap;}
 	.ms365cal-detail{margin:6px 0 4px;font-size:13px;line-height:1.6;}
 	.ms365cal-detail div,.ms365cal-detail p{margin:5px 0;}
@@ -2604,7 +2605,7 @@ function ms365cal_assets() {
 	.ms365cal-preview{font-size:12.5px;opacity:.65;margin-top:3px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-clamp:2;}
 	/* Compact layout: times+category is a fixed-width single line — a *fixed* width on .ms365cal-times, not just content that happens to stay on one line, is what actually keeps the rail at the same x position on every row; letting the column size to its own content (width:auto) put the rail at a different x on almost every row depending on how wide that row's time text happened to be. Category label is the flexible element that ellipsises to whatever's left, t1/t2 keep their own width cap so a long multi-day date/time can't blow the budget either. Title+meta is a strictly non-wrapping line (title ellipsises, recurrence drops to just the icon), detail still drops to its own full-width line when opened. Rows sit closer together. */
 	.ms365cal-layout-compact .ms365cal-row{padding:0 10px;}
-	.ms365cal-layout-compact .ms365cal-times{flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;width:130px;flex:0 0 130px;overflow:hidden;gap:6px;text-align:left;padding:4px 0;font-size:11px;}
+	.ms365cal-layout-compact .ms365cal-times{flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;width:195px;flex:0 0 195px;overflow:hidden;gap:6px;text-align:left;padding:4px 0;font-size:11px;}
 	.ms365cal-layout-compact .ms365cal-t1,.ms365cal-layout-compact .ms365cal-t2{flex:0 0 auto;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 	/* A true fixed width (flex:0 0 50px + width, not just a max-width a shorter label could fall under) — otherwise a short category name leaves a variable gap before the rail instead of the times cluster always filling the same footprint edge to edge. */
 	.ms365cal-layout-compact .ms365cal-cat{flex:0 0 50px;width:50px;box-sizing:border-box;min-width:0;padding:1px 6px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -2615,7 +2616,10 @@ function ms365cal_assets() {
 	.ms365cal-layout-compact .ms365cal-ev,.ms365cal-layout-compact .ms365cal-ev-static{flex:1 1 auto;min-width:0;width:auto;}
 	.ms365cal-layout-compact .ms365cal-title{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 	.ms365cal-layout-compact .ms365cal-meta-line{flex:0 0 auto;margin-top:0;padding-top:0;white-space:nowrap;}
-	.ms365cal-layout-compact .ms365cal-loc-line{max-width:150px;}
+	.ms365cal-layout-compact .ms365cal-loc-line{max-width:188px;}
+	.ms365cal-layout-compact .ms365cal-loc-pin{display:none;flex:0 0 auto;width:14px;text-align:center;cursor:default;}
+	.ms365cal-layout-compact .ms365cal-row.is-loc-pinned .ms365cal-loc-text{display:none;}
+	.ms365cal-layout-compact .ms365cal-row.is-loc-pinned .ms365cal-loc-pin{display:inline-block;}
 	/* Fixed width whether or not there's actually a pattern to show (see the JS: a recurrence-less row still gets an empty span here) — otherwise the location's start position would shift depending on whether a neighbouring row happened to have a recurrence icon or not. */
 	.ms365cal-layout-compact .ms365cal-recur-line{display:inline-block;width:14px;flex:0 0 auto;text-align:center;cursor:default;}
 	/* Expanded layout: an always-visible body snippet under the title. */
@@ -3064,7 +3068,8 @@ function ms365cal_assets() {
 				// it shifting by however wide the icon would've been.
 				var compactBits='';
 				if(locText){
-					compactBits+='<span class="ms365cal-loc-line">'+esc(locText)+'</span>';
+					compactBits+='<span class="ms365cal-loc-line ms365cal-loc-text">'+esc(locText)+'</span>'
+						+'<span class="ms365cal-loc-pin" title="'+escAttr(locText)+'" aria-label="'+escAttr(locText)+'">📍</span>';
 					compactBits+=isRecurring
 						?'<span class="ms365cal-recur-line" title="'+escAttr(recurTitle)+'">\u21bb</span>'
 						:'<span class="ms365cal-recur-line" aria-hidden="true"></span>';
@@ -3430,6 +3435,23 @@ function ms365cal_assets() {
 			}
 			html+=renderDays(upcoming);
 			listEl.innerHTML=html;
+			adjustCompactLocationPins();
+		}
+
+		function adjustCompactLocationPins(){
+			if(mode!=='list'||layout!=='compact')return;
+			listEl.querySelectorAll('.ms365cal-row.is-loc-pinned').forEach(function(row){
+				row.classList.remove('is-loc-pinned');
+			});
+			listEl.querySelectorAll('.ms365cal-row').forEach(function(row){
+				var title=row.querySelector('.ms365cal-title');
+				var loc=row.querySelector('.ms365cal-loc-text');
+				var pin=row.querySelector('.ms365cal-loc-pin');
+				if(!title||!loc||!pin)return;
+				if(title.scrollWidth>title.clientWidth+0.5){
+					row.classList.add('is-loc-pinned');
+				}
+			});
 		}
 
 		// Lazy body fetch (cfg.lazyBody): the detail container already carries
@@ -3671,6 +3693,11 @@ function ms365cal_assets() {
 		}
 		var feedbackBtn=root.querySelector('.ms365cal-feedback-btn');
 		if(feedbackBtn)feedbackBtn.addEventListener('click',openFeedbackDialog);
+		var resizeTimer=null;
+		window.addEventListener('resize',function(){
+			if(resizeTimer)clearTimeout(resizeTimer);
+			resizeTimer=setTimeout(adjustCompactLocationPins,100);
+		});
 
 		renderChips();
 		load();
