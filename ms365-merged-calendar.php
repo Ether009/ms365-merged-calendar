@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.30.0
+ * Version:           2.30.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2466,7 +2466,7 @@ function ms365cal_shortcode( $atts ) {
 			<span>
 				<button type="button" class="ms365cal-act" data-act="all">Välj alla</button>
 				<button type="button" class="ms365cal-act" data-act="none">Rensa</button>
-				<label class="ms365cal-recurring-filter"><input type="checkbox" class="ms365cal-recurring-toggle" checked> <?php echo esc_html( $recurring_label ); ?></label>
+				<label class="ms365cal-recurring-filter"><input type="checkbox" class="ms365cal-recurring-toggle" checked><span><?php echo esc_html( $recurring_label ); ?></span></label>
 			</span>
 		</div>
 
@@ -2529,11 +2529,12 @@ function ms365cal_assets() {
 	.ms365cal{--ms-line:rgba(120,120,125,.22);--ms-soft:rgba(120,120,125,.09);font-size:15px;line-height:1.5;}
 	.ms365cal-bar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
 	.ms365cal-title{font-weight:700;font-size:1.05em;}
-	.ms365cal-act{font-family:inherit;font-size:12px;font-style:normal;font-weight:400;line-height:1.5;letter-spacing:normal;text-transform:none;padding:5px 12px;margin-left:6px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.75;transition:background .15s,opacity .15s;}
+	.ms365cal-act{font-size:12px;padding:5px 12px;margin-left:6px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.75;transition:background .15s,opacity .15s;}
 	.ms365cal-act:hover{background:var(--ms-soft);opacity:1;}
-	.ms365cal-recurring-filter{display:inline-flex;align-items:center;gap:5px;margin-left:10px;font-family:inherit;font-size:12px;font-style:normal;font-weight:400;line-height:1.5;letter-spacing:normal;text-transform:none;color:inherit;opacity:.75;cursor:pointer;white-space:nowrap;}
-	.ms365cal-recurring-filter:hover{opacity:1;}
-	.ms365cal-recurring-filter input{margin:0;width:13px;height:13px;}
+	.ms365cal-recurring-filter{display:inline-flex;align-items:center;gap:6px;margin-left:6px;padding:5px 12px;border:1px solid var(--ms-line);border-radius:999px;background:transparent;color:inherit;opacity:.75;cursor:pointer;white-space:nowrap;transition:background .15s,opacity .15s;}
+	.ms365cal-recurring-filter:hover{background:var(--ms-soft);opacity:1;}
+	.ms365cal-recurring-filter input{margin:0;width:12px;height:12px;flex:0 0 auto;}
+	.ms365cal-recurring-filter span{font-size:12px;font-weight:400;line-height:1.5;}
 	.ms365cal-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;}
 	.ms365cal-chip{display:inline-flex;align-items:center;gap:7px;font-size:13px;padding:6px 13px;border-radius:999px;cursor:pointer;border:1px solid var(--ms-line);background:transparent;color:inherit;opacity:.5;transition:opacity .15s,border-color .15s,background .15s,color .15s;}
 	.ms365cal-chip:hover{opacity:.8;}
