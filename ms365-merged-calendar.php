@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.31.1
+ * Version:           2.31.2
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2579,7 +2579,7 @@ function ms365cal_assets() {
 	.ms365cal-row{border-radius:12px;padding:0 12px;transition:background .12s;}
 	.ms365cal-row:hover{background:var(--ms-soft);}
 	.ms365cal-head{display:flex;align-items:stretch;gap:10px;}
-	.ms365cal-times{flex:0 0 auto;width:123px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;text-align:right;padding:10px 0;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.25;}
+	.ms365cal-times{flex:0 0 auto;width:103px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;text-align:right;padding:10px 0;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.25;}
 	.ms365cal-t1{font-weight:600;opacity:.85;}
 	.ms365cal-t2{opacity:.5;}
 	.ms365cal-cat{display:inline-block;box-sizing:border-box;width:100%;font-size:11px;font-weight:600;line-height:1.2;overflow-wrap:break-word;max-width:100%;padding:3px 8px;border-radius:999px;}
@@ -2605,7 +2605,7 @@ function ms365cal_assets() {
 	.ms365cal-preview{font-size:12.5px;opacity:.65;margin-top:3px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-clamp:2;}
 	/* Compact layout: times+category is a fixed-width single line — a *fixed* width on .ms365cal-times, not just content that happens to stay on one line, is what actually keeps the rail at the same x position on every row; letting the column size to its own content (width:auto) put the rail at a different x on almost every row depending on how wide that row's time text happened to be. Category label is the flexible element that ellipsises to whatever's left, t1/t2 keep their own width cap so a long multi-day date/time can't blow the budget either. Title+meta is a strictly non-wrapping line (title ellipsises, recurrence drops to just the icon), detail still drops to its own full-width line when opened. Rows sit closer together. */
 	.ms365cal-layout-compact .ms365cal-row{padding:0 10px;}
-	.ms365cal-layout-compact .ms365cal-times{flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;width:195px;flex:0 0 195px;overflow:hidden;gap:6px;text-align:left;padding:4px 0;font-size:11px;}
+	.ms365cal-layout-compact .ms365cal-times{flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;width:163px;flex:0 0 163px;overflow:hidden;gap:6px;text-align:left;padding:4px 0;font-size:11px;}
 	.ms365cal-layout-compact .ms365cal-t1,.ms365cal-layout-compact .ms365cal-t2{flex:0 0 auto;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 	/* Fill the widened label slot instead of leaving empty space before the rail. */
 	.ms365cal-layout-compact .ms365cal-cat{flex:1 1 auto;width:auto;box-sizing:border-box;min-width:0;padding:1px 6px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
