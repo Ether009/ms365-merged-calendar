@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.29.1
+ * Version:           2.29.2
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2450,7 +2450,7 @@ function ms365cal_assets() {
 	.ms365cal-title{font-weight:700;font-size:1.05em;}
 	.ms365cal-act{font-size:12px;padding:5px 12px;margin-left:6px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.75;transition:background .15s,opacity .15s;}
 	.ms365cal-act:hover{background:var(--ms-soft);opacity:1;}
-	.ms365cal-recurring-filter{display:inline-flex;align-items:center;gap:5px;margin-left:10px;font-size:12px;font-weight:600;opacity:.78;cursor:pointer;white-space:nowrap;}
+	.ms365cal-recurring-filter{display:inline-flex;align-items:center;gap:5px;margin-left:10px;font-size:12px;font-weight:400;opacity:.75;cursor:pointer;white-space:nowrap;}
 	.ms365cal-recurring-filter:hover{opacity:1;}
 	.ms365cal-recurring-filter input{margin:0;}
 	.ms365cal-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;}
