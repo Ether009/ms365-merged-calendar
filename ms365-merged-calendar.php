@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.31.0
+ * Version:           2.31.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2582,7 +2582,7 @@ function ms365cal_assets() {
 	.ms365cal-times{flex:0 0 auto;width:123px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;text-align:right;padding:10px 0;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.25;}
 	.ms365cal-t1{font-weight:600;opacity:.85;}
 	.ms365cal-t2{opacity:.5;}
-	.ms365cal-cat{display:inline-block;font-size:11px;font-weight:600;line-height:1.2;overflow-wrap:break-word;max-width:100%;padding:3px 8px;border-radius:999px;}
+	.ms365cal-cat{display:inline-block;box-sizing:border-box;width:100%;font-size:11px;font-weight:600;line-height:1.2;overflow-wrap:break-word;max-width:100%;padding:3px 8px;border-radius:999px;}
 	.ms365cal-rail{width:4px;border-radius:999px;flex:0 0 auto;margin:10px 0;}
 	.ms365cal-hbody{flex:1;min-width:0;padding:10px 0;display:flex;flex-direction:column;}
 	.ms365cal-ev,.ms365cal-ev-static{font-size:15px;font-weight:600;background:none;border:0;padding:0;margin:0;text-align:left;text-transform:none;color:inherit;font-family:inherit;display:flex;align-items:baseline;gap:9px;width:100%;line-height:1.35;}
@@ -2607,8 +2607,8 @@ function ms365cal_assets() {
 	.ms365cal-layout-compact .ms365cal-row{padding:0 10px;}
 	.ms365cal-layout-compact .ms365cal-times{flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;width:195px;flex:0 0 195px;overflow:hidden;gap:6px;text-align:left;padding:4px 0;font-size:11px;}
 	.ms365cal-layout-compact .ms365cal-t1,.ms365cal-layout-compact .ms365cal-t2{flex:0 0 auto;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-	/* A true fixed width (flex:0 0 50px + width, not just a max-width a shorter label could fall under) — otherwise a short category name leaves a variable gap before the rail instead of the times cluster always filling the same footprint edge to edge. */
-	.ms365cal-layout-compact .ms365cal-cat{flex:0 0 50px;width:50px;box-sizing:border-box;min-width:0;padding:1px 6px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+	/* Fill the widened label slot instead of leaving empty space before the rail. */
+	.ms365cal-layout-compact .ms365cal-cat{flex:1 1 auto;width:auto;box-sizing:border-box;min-width:0;padding:1px 6px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 	/* No margin, no rounding: the rail fills the row's full height edge-to-edge, and with zero gap between rows already, adjacent rails butt straight up against each other — reads as one continuous line that changes colour, not a row of separate pills. */
 	.ms365cal-layout-compact .ms365cal-rail{margin:0;border-radius:0;}
 	.ms365cal-layout-compact .ms365cal-hbody{padding:4px 0;}
