@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.28.0
+ * Version:           2.29.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2389,6 +2389,8 @@ function ms365cal_shortcode( $atts ) {
 	);
 
 	$uid = 'ms365cal-' . wp_generate_password( 6, false, false );
+	$locale          = function_exists( 'determine_locale' ) ? determine_locale() : get_locale();
+	$recurring_label = 0 === strpos( strtolower( (string) $locale ), 'sv' ) ? 'Återkommande' : 'Recurring';
 
 	ob_start();
 	?>
@@ -2398,6 +2400,7 @@ function ms365cal_shortcode( $atts ) {
 			<span>
 				<button type="button" class="ms365cal-act" data-act="all">Välj alla</button>
 				<button type="button" class="ms365cal-act" data-act="none">Rensa</button>
+				<label class="ms365cal-recurring-filter"><input type="checkbox" class="ms365cal-recurring-toggle" checked> <?php echo esc_html( $recurring_label ); ?></label>
 			</span>
 		</div>
 
@@ -2447,6 +2450,9 @@ function ms365cal_assets() {
 	.ms365cal-title{font-weight:700;font-size:1.05em;}
 	.ms365cal-act{font-size:12px;padding:5px 12px;margin-left:6px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.75;transition:background .15s,opacity .15s;}
 	.ms365cal-act:hover{background:var(--ms-soft);opacity:1;}
+	.ms365cal-recurring-filter{display:inline-flex;align-items:center;gap:5px;margin-left:10px;font-size:12px;font-weight:600;opacity:.78;cursor:pointer;white-space:nowrap;}
+	.ms365cal-recurring-filter:hover{opacity:1;}
+	.ms365cal-recurring-filter input{margin:0;}
 	.ms365cal-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;}
 	.ms365cal-chip{display:inline-flex;align-items:center;gap:7px;font-size:13px;padding:6px 13px;border-radius:999px;cursor:pointer;border:1px solid var(--ms-line);background:transparent;color:inherit;opacity:.5;transition:opacity .15s,border-color .15s,background .15s,color .15s;}
 	.ms365cal-chip:hover{opacity:.8;}
@@ -2621,6 +2627,7 @@ function ms365cal_assets() {
 
 		var enabled = {};
 		cfg.cals.forEach(function(s){enabled[s]=!!cfg.defaults[s];});
+		var showRecurring = true;
 
 		// Monday of the week containing d (weeks start Monday).
 		function weekStart(d){var x=new Date(d.getFullYear(),d.getMonth(),d.getDate());x.setDate(x.getDate()-((x.getDay()+6)%7));return x;}
@@ -3237,7 +3244,7 @@ function ms365cal_assets() {
 
 		function paint(){
 			var events=cache[winKey()]||[];
-			var visible=events.filter(function(e){return enabled[e.cal];});
+			var visible=events.filter(function(e){return enabled[e.cal]&&(showRecurring||!(e.recurring||e.recur));});
 			if(mode==='calendar'){
 				if(calView==='month')renderMonth(visible,days,monthRef||start);
 				else renderTimeline(visible,days);
@@ -3505,6 +3512,14 @@ function ms365cal_assets() {
 				renderChips();paint();
 			});
 		});
+		var recurringToggle=root.querySelector('.ms365cal-recurring-toggle');
+		if(recurringToggle){
+			showRecurring=recurringToggle.checked;
+			recurringToggle.addEventListener('change',function(){
+				showRecurring=recurringToggle.checked;
+				paint();
+			});
+		}
 
 		renderChips();
 		load();
