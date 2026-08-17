@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.29.2
+ * Version:           2.30.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -1560,6 +1560,20 @@ function ms365cal_register_rest() {
 		)
 	);
 
+	register_rest_route(
+		'ms365cal/v1',
+		'/feedback',
+		array(
+			'methods'             => 'POST',
+			'permission_callback' => '__return_true',
+			'args'                => array(
+				'message' => array( 'sanitize_callback' => 'sanitize_textarea_field' ),
+				'page'    => array( 'sanitize_callback' => 'esc_url_raw' ),
+			),
+			'callback'            => 'ms365cal_rest_feedback',
+		)
+	);
+
 	// Deploy hook: force this plugin to pull + install its latest GitHub release.
 	// Disabled unless MS365CAL_DEPLOY_KEY is defined in wp-config; auth is the key
 	// (timing-safe compare), so no WP login is required. See ms365cal_rest_self_update().
@@ -1901,6 +1915,52 @@ function ms365cal_rate_check() {
 	// clicks) never approaches the limit.
 	set_transient( $key, $count + 1, $window );
 	return true;
+}
+
+function ms365cal_feedback_rate_check() {
+	$key   = 'ms365cal_feedback_rl_' . md5( ms365cal_client_ip() );
+	$count = (int) get_transient( $key );
+	if ( $count >= 5 ) {
+		return false;
+	}
+	set_transient( $key, $count + 1, 15 * MINUTE_IN_SECONDS );
+	return true;
+}
+
+function ms365cal_rest_feedback( WP_REST_Request $req ) {
+	$nonce = (string) $req->get_header( 'x_wp_nonce' );
+	if ( ! wp_verify_nonce( $nonce, 'wp_rest' ) ) {
+		return new WP_REST_Response( array( 'error' => 'bad_nonce' ), 403 );
+	}
+	if ( ! ms365cal_feedback_rate_check() ) {
+		return new WP_REST_Response( array( 'error' => 'rate_limited' ), 429 );
+	}
+
+	$message = trim( (string) $req->get_param( 'message' ) );
+	if ( '' === $message ) {
+		return new WP_REST_Response( array( 'error' => 'empty_message' ), 400 );
+	}
+	if ( strlen( $message ) > 4000 ) {
+		$message = substr( $message, 0, 4000 );
+	}
+
+	$page      = esc_url_raw( (string) $req->get_param( 'page' ) );
+	$recipient = (string) apply_filters( 'ms365cal_feedback_recipient', 'it@lundsfontanhus.se' );
+	$subject   = sprintf( '[%s] Kalenderfeedback', wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) );
+	$body      = "Feedback:\n\n{$message}\n\n";
+	if ( '' !== $page ) {
+		$body .= "Sida: {$page}\n";
+	}
+	$body .= 'IP: ' . ms365cal_client_ip() . "\n";
+	if ( ! empty( $_SERVER['HTTP_USER_AGENT'] ) ) {
+		$body .= 'User-Agent: ' . sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) . "\n";
+	}
+
+	if ( ! is_email( $recipient ) || ! wp_mail( $recipient, $subject, $body ) ) {
+		return new WP_REST_Response( array( 'error' => 'mail_failed' ), 500 );
+	}
+
+	return new WP_REST_Response( array( 'sent' => true ), 200 );
 }
 
 function ms365cal_rest_events( WP_REST_Request $req ) {
@@ -2374,23 +2434,29 @@ function ms365cal_shortcode( $atts ) {
 	}
 
 	$config = array(
-		'rest'        => esc_url_raw( rest_url( 'ms365cal/v1/events' ) ),
-		'bodyRest'    => esc_url_raw( rest_url( 'ms365cal/v1/event-body' ) ),
-		'cals'        => wp_list_pluck( $scoped, 'slug' ),
-		'meta'        => $meta,
-		'defaults'    => $defaults,
-		'windowDays'  => $window,
-		'startY'      => (int) $today->format( 'Y' ),
-		'startM'      => (int) $today->format( 'n' ),
-		'startD'      => (int) $today->format( 'j' ),
-		'showOutlook' => ! empty( $settings['show_outlook'] ),
-		'lazyBody'    => ! empty( $settings['lazy_body'] ),
-		'tlInterval'  => (int) $settings['timeline_interval'],
+		'rest'         => esc_url_raw( rest_url( 'ms365cal/v1/events' ) ),
+		'bodyRest'     => esc_url_raw( rest_url( 'ms365cal/v1/event-body' ) ),
+		'feedbackRest' => esc_url_raw( rest_url( 'ms365cal/v1/feedback' ) ),
+		'nonce'        => wp_create_nonce( 'wp_rest' ),
+		'cals'         => wp_list_pluck( $scoped, 'slug' ),
+		'meta'         => $meta,
+		'defaults'     => $defaults,
+		'windowDays'   => $window,
+		'startY'       => (int) $today->format( 'Y' ),
+		'startM'       => (int) $today->format( 'n' ),
+		'startD'       => (int) $today->format( 'j' ),
+		'showOutlook'  => ! empty( $settings['show_outlook'] ),
+		'lazyBody'     => ! empty( $settings['lazy_body'] ),
+		'tlInterval'   => (int) $settings['timeline_interval'],
 	);
 
 	$uid             = 'ms365cal-' . wp_generate_password( 6, false, false );
 	$locale          = function_exists( 'determine_locale' ) ? determine_locale() : get_locale();
-	$recurring_label = 0 === strpos( strtolower( (string) $locale ), 'sv' ) ? 'Återkommande' : 'Recurring';
+	$is_sv           = 0 === strpos( strtolower( (string) $locale ), 'sv' );
+	$recurring_label = $is_sv ? 'Återkommande' : 'Recurring';
+	$feedback_label  = $is_sv ? 'Feedback' : 'Feedback';
+	$submit_label    = $is_sv ? 'Skicka' : 'Submit';
+	$cancel_label    = $is_sv ? 'Avbryt' : 'Cancel';
 
 	ob_start();
 	?>
@@ -2406,10 +2472,25 @@ function ms365cal_shortcode( $atts ) {
 
 		<div class="ms365cal-chips"></div>
 
-		<div class="ms365cal-mode-switch" role="group" aria-label="Vytyp">
-			<button type="button" class="ms365cal-mode-btn" data-mode="list">Lista</button>
-			<button type="button" class="ms365cal-mode-btn" data-mode="calendar">Kalender</button>
+		<div class="ms365cal-view-row">
+			<button type="button" class="ms365cal-feedback-btn"><?php echo esc_html( $feedback_label ); ?></button>
+			<div class="ms365cal-mode-switch" role="group" aria-label="Vytyp">
+				<button type="button" class="ms365cal-mode-btn" data-mode="list">Lista</button>
+				<button type="button" class="ms365cal-mode-btn" data-mode="calendar">Kalender</button>
+			</div>
 		</div>
+		<template class="ms365cal-feedback-template">
+			<div class="ms365cal-feedback-backdrop">
+				<form class="ms365cal-feedback-dialog" role="dialog" aria-modal="true" aria-label="<?php echo esc_attr( $feedback_label ); ?>">
+					<textarea class="ms365cal-feedback-text" required maxlength="4000"></textarea>
+					<div class="ms365cal-feedback-actions">
+						<button type="button" class="ms365cal-feedback-cancel"><?php echo esc_html( $cancel_label ); ?></button>
+						<button type="submit" class="ms365cal-feedback-submit"><?php echo esc_html( $submit_label ); ?></button>
+					</div>
+					<div class="ms365cal-feedback-status" aria-live="polite"></div>
+				</form>
+			</div>
+		</template>
 
 		<div class="ms365cal-layout-switch" role="group" aria-label="Layout" data-for-mode="list">
 			<button type="button" class="ms365cal-layout-btn" data-layout="standard">Standard</button>
@@ -2448,11 +2529,11 @@ function ms365cal_assets() {
 	.ms365cal{--ms-line:rgba(120,120,125,.22);--ms-soft:rgba(120,120,125,.09);font-size:15px;line-height:1.5;}
 	.ms365cal-bar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
 	.ms365cal-title{font-weight:700;font-size:1.05em;}
-	.ms365cal-act{font-size:12px;padding:5px 12px;margin-left:6px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.75;transition:background .15s,opacity .15s;}
+	.ms365cal-act{font-family:inherit;font-size:12px;font-style:normal;font-weight:400;line-height:1.5;letter-spacing:normal;text-transform:none;padding:5px 12px;margin-left:6px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.75;transition:background .15s,opacity .15s;}
 	.ms365cal-act:hover{background:var(--ms-soft);opacity:1;}
-	.ms365cal-recurring-filter{display:inline-flex;align-items:center;gap:5px;margin-left:10px;font-size:12px;font-weight:400;opacity:.75;cursor:pointer;white-space:nowrap;}
+	.ms365cal-recurring-filter{display:inline-flex;align-items:center;gap:5px;margin-left:10px;font-family:inherit;font-size:12px;font-style:normal;font-weight:400;line-height:1.5;letter-spacing:normal;text-transform:none;color:inherit;opacity:.75;cursor:pointer;white-space:nowrap;}
 	.ms365cal-recurring-filter:hover{opacity:1;}
-	.ms365cal-recurring-filter input{margin:0;}
+	.ms365cal-recurring-filter input{margin:0;width:13px;height:13px;}
 	.ms365cal-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;}
 	.ms365cal-chip{display:inline-flex;align-items:center;gap:7px;font-size:13px;padding:6px 13px;border-radius:999px;cursor:pointer;border:1px solid var(--ms-line);background:transparent;color:inherit;opacity:.5;transition:opacity .15s,border-color .15s,background .15s,color .15s;}
 	.ms365cal-chip:hover{opacity:.8;}
@@ -2460,7 +2541,10 @@ function ms365cal_assets() {
 	.ms365cal-dot{width:9px;height:9px;border-radius:50%;background:currentColor;opacity:.35;}
 	.ms365cal-chip.is-on .ms365cal-dot{background:var(--cc);opacity:1;}
 	/* Tier 1 (List/Calendar): a filled "track" with a pill thumb — the primary, higher-level choice. Tier 2 (below) is deliberately a different shape (squared-off tabs, not pills) and visually lighter, so the two read as different kinds of control rather than one long row of similar buttons. */
-	.ms365cal-mode-switch{display:flex;justify-content:flex-end;gap:2px;padding:3px;background:var(--ms-soft);border-radius:999px;margin:0 0 8px auto;width:max-content;}
+	.ms365cal-view-row{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin:0 0 8px auto;}
+	.ms365cal-feedback-btn{font-family:inherit;font-size:13px;font-style:normal;font-weight:700;line-height:1.5;letter-spacing:normal;text-transform:none;padding:7px 14px;background:transparent;border:1px solid var(--ms-line);border-radius:999px;cursor:pointer;color:inherit;opacity:.65;transition:opacity .15s,background .15s;}
+	.ms365cal-feedback-btn:hover{opacity:1;background:var(--ms-soft);}
+	.ms365cal-mode-switch{display:flex;justify-content:flex-end;gap:2px;padding:3px;background:var(--ms-soft);border-radius:999px;margin:0;width:max-content;}
 	.ms365cal-mode-btn{font-size:13px;padding:7px 16px;background:transparent;border:none;border-radius:999px;cursor:pointer;color:inherit;opacity:.55;font-weight:700;transition:opacity .15s,background .15s;}
 	.ms365cal-mode-btn:hover{opacity:.85;}
 	.ms365cal-mode-btn.is-active{opacity:1;background:var(--ms-line);}
@@ -2588,6 +2672,15 @@ function ms365cal_assets() {
 	.ms365cal-modal-list-body{display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow-y:auto;}
 	.ms365cal-modal-list-item{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--ms-line);border-radius:8px;background:none;font:inherit;text-align:left;text-transform:none;letter-spacing:normal;cursor:pointer;color:inherit;}
 	.ms365cal-modal-list-item:hover,.ms365cal-modal-list-item:focus-visible{background:var(--ms-soft);outline:2px solid rgba(0,0,0,.15);outline-offset:-2px;}
+	.ms365cal-feedback-backdrop{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);padding:18px;}
+	.ms365cal-feedback-dialog{width:min(460px,100%);box-sizing:border-box;background:Canvas;color:CanvasText;border:1px solid var(--ms-line);border-radius:8px;padding:16px;box-shadow:0 14px 40px rgba(0,0,0,.25);}
+	.ms365cal-feedback-text{display:block;width:100%;min-height:150px;box-sizing:border-box;margin:0 0 12px;padding:10px;border:1px solid var(--ms-line);border-radius:6px;background:transparent;color:inherit;font:inherit;resize:vertical;}
+	.ms365cal-feedback-actions{display:flex;justify-content:flex-end;gap:8px;}
+	.ms365cal-feedback-cancel,.ms365cal-feedback-submit{font-family:inherit;font-size:13px;font-style:normal;font-weight:700;line-height:1.5;letter-spacing:normal;text-transform:none;padding:7px 14px;border-radius:999px;cursor:pointer;color:inherit;}
+	.ms365cal-feedback-cancel{background:transparent;border:1px solid var(--ms-line);opacity:.7;}
+	.ms365cal-feedback-submit{background:var(--ms-line);border:1px solid var(--ms-line);opacity:1;}
+	.ms365cal-feedback-cancel:hover,.ms365cal-feedback-submit:hover{opacity:1;background:var(--ms-soft);}
+	.ms365cal-feedback-status{min-height:1.5em;margin-top:8px;font-size:12px;opacity:.75;text-align:right;}
 	.ms365cal-modal-list-dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto;}
 	.ms365cal-modal-list-text{display:flex;flex-direction:column;gap:2px;min-width:0;}
 	.ms365cal-modal-list-title{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -2812,6 +2905,61 @@ function ms365cal_assets() {
 		}
 		function modalKeyHandler(ev){
 			if(ev.key==='Escape')closeEventModal();
+		}
+		function closeFeedbackDialog(){
+			var dlg=document.querySelector('.ms365cal-feedback-backdrop');
+			if(dlg)dlg.remove();
+			document.removeEventListener('keydown',feedbackKeyHandler);
+		}
+		function feedbackKeyHandler(ev){
+			if(ev.key==='Escape')closeFeedbackDialog();
+		}
+		function openFeedbackDialog(){
+			closeFeedbackDialog();
+			var tpl=root.querySelector('.ms365cal-feedback-template');
+			if(!tpl)return;
+			var frag=tpl.content.cloneNode(true);
+			document.body.appendChild(frag);
+			var backdrop=document.querySelector('.ms365cal-feedback-backdrop');
+			var form=backdrop?backdrop.querySelector('.ms365cal-feedback-dialog'):null;
+			var text=form?form.querySelector('.ms365cal-feedback-text'):null;
+			var status=form?form.querySelector('.ms365cal-feedback-status'):null;
+			var cancel=form?form.querySelector('.ms365cal-feedback-cancel'):null;
+			if(!backdrop||!form||!text||!status)return;
+			document.addEventListener('keydown',feedbackKeyHandler);
+			text.focus();
+			backdrop.addEventListener('click',function(ev){if(ev.target===backdrop)closeFeedbackDialog();});
+			if(cancel)cancel.addEventListener('click',closeFeedbackDialog);
+			form.addEventListener('submit',function(ev){
+				ev.preventDefault();
+				var msg=text.value.trim();
+				if(!msg){
+					status.textContent='Skriv ett meddelande först.';
+					text.focus();
+					return;
+				}
+				var submit=form.querySelector('.ms365cal-feedback-submit');
+				if(submit)submit.disabled=true;
+				status.textContent='Skickar…';
+				fetch(cfg.feedbackRest,{
+					method:'POST',
+					headers:{
+						'Accept':'application/json',
+						'Content-Type':'application/json',
+						'X-WP-Nonce':cfg.nonce||''
+					},
+					body:JSON.stringify({message:msg,page:location.href})
+				})
+					.then(function(r){if(!r.ok)throw new Error(r.status);return r.json();})
+					.then(function(){
+						status.textContent='Skickat.';
+						setTimeout(closeFeedbackDialog,700);
+					})
+					.catch(function(){
+						status.textContent='Kunde inte skicka. Försök igen.';
+						if(submit)submit.disabled=false;
+					});
+			});
 		}
 		// The calendar-grid views (Day/Week/Month) show events as small colour
 		// blocks/chips with no room for a body — clicking one opens this instead
@@ -3520,6 +3668,8 @@ function ms365cal_assets() {
 				paint();
 			});
 		}
+		var feedbackBtn=root.querySelector('.ms365cal-feedback-btn');
+		if(feedbackBtn)feedbackBtn.addEventListener('click',openFeedbackDialog);
 
 		renderChips();
 		load();
