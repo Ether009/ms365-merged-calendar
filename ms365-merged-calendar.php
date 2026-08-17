@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.29.0
+ * Version:           2.29.1
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -2388,7 +2388,7 @@ function ms365cal_shortcode( $atts ) {
 		'tlInterval'  => (int) $settings['timeline_interval'],
 	);
 
-	$uid = 'ms365cal-' . wp_generate_password( 6, false, false );
+	$uid             = 'ms365cal-' . wp_generate_password( 6, false, false );
 	$locale          = function_exists( 'determine_locale' ) ? determine_locale() : get_locale();
 	$recurring_label = 0 === strpos( strtolower( (string) $locale ), 'sv' ) ? 'Återkommande' : 'Recurring';
 
