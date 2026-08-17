@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MS365 Merged Calendar (Async)
  * Description:        Merge calendars from Microsoft 365 groups and shared mailboxes into one filterable, windowed list. Events load asynchronously per view via a REST endpoint; prev/next paging with client-side window caching.
- * Version:           2.27.2
+ * Version:           2.28.0
  * Requires PHP:      7.4
  * Author:            You
  * License:           GPL-2.0-or-later
@@ -571,9 +571,11 @@ function ms365cal_sanitize_event_html( $html ) {
  * fetch (ms365cal_fetch_calendars_batched()), so the event-shaping logic — time
  * labels, the left-column t1/t2, longSpan, body sanitisation, recurrence-master
  * collection — lives in exactly one place. $need_masters accumulates
- * seriesMasterId => true for any recurring occurrence found, by reference. When
- * $show_recur is false, recurrence text/collection is skipped entirely (every row's
- * 'recur' stays '') so the caller never issues the extra $batch calls to resolve it.
+ * seriesMasterId => true for any recurring occurrence found, by reference. Every
+ * recurring row still gets a cheap boolean 'recurring' flag from Graph's initial
+ * calendarView data; when $show_recur is false, only the expensive recurrence text
+ * collection is skipped (every row's 'recur' stays '') so the caller never issues
+ * the extra $batch calls to resolve it.
  * When $lazy_body is true, $raw_events never carried 'body' in the first place (see
  * ms365cal_view_url()), so every row's 'body' stays '' and the dedupe/boilerplate/
  * sanitise pipeline never runs here; the row instead carries the raw Graph event 'id'
@@ -670,15 +672,14 @@ function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $wi
 			$t2 = $en ? wp_date( $time_fmt, $en->getTimestamp(), $zone ) : '';
 		}
 
-		// Recurrence: calendarView returns expanded occurrences; the pattern
-		// lives on the series master. Collect the master IDs now and resolve
-		// them together via $batch after paging (see below); until then, mark
-		// the row generic. Occurrences/exceptions with no master stay generic.
-		// Skipped entirely when $show_recur is off, so no master IDs are ever
-		// collected and the caller never makes the resolution $batch calls.
+		// Recurrence: calendarView already tells us whether an event is part of a
+		// series (type + seriesMasterId), which is cheap enough for the icon. The
+		// human-readable pattern still lives on the series master, so only collect
+		// master IDs for the optional slower lookup when that setting is enabled.
 		$recur     = '';
 		$master_id = isset( $e['seriesMasterId'] ) ? $e['seriesMasterId'] : '';
 		$etype     = isset( $e['type'] ) ? $e['type'] : '';
+		$recurring = ( '' !== $master_id ) || in_array( $etype, array( 'occurrence', 'exception', 'seriesMaster' ), true );
 		if ( $show_recur ) {
 			if ( '' !== $master_id ) {
 				$recur = 'Återkommande händelse';
@@ -738,6 +739,7 @@ function ms365cal_build_rows_from_page( $cal, $raw_events, $zone, $time_fmt, $wi
 			't2'          => $t2,
 			'when'        => $when,
 			'recur'       => $recur,
+			'recurring'   => $recurring,
 			'longSpan'    => $long_span,
 			'carriedOver' => $carried_over,
 			'body'        => $event_body,
@@ -2625,44 +2627,10 @@ function ms365cal_assets() {
 		var today    = new Date(cfg.startY, cfg.startM-1, cfg.startD); // today, site tz
 		var todayKey = iso(today);
 
-		// View preference (top-tier mode + its sub-style) persists per page — a
-		// cookie scoped to the current page's own path (not site-wide `path=/`), so
-		// e.g. one page embedding the calendar in Week and another in Day don't
-		// fight over a single shared preference; each page remembers its own last
-		// choice independently, same as if each had a separate embed config.
-		// Migrated once from the old pre-Calendar-mode localStorage key (which
-		// *was* site-wide) so an existing visitor's List sub-style choice isn't
-		// silently reset. "Month" is deliberately never the persisted sub-style
-		// (see the click handler below) — a return visit should never silently
-		// re-fetch a whole month's worth of events just because that was the last
-		// thing clicked; it falls back to Week instead, and Month has to be asked
-		// for again each time.
-		function getCookie(name){
-			var m=document.cookie.match('(?:^|; )'+name.replace(/([.$?*|{}()\[\]\\\/\+^])/g,'\\$1')+'=([^;]*)');
-			return m?decodeURIComponent(m[1]):null;
-		}
-		function setCookie(name,value){
-			var d=new Date();d.setTime(d.getTime()+365*86400000);
-			document.cookie=name+'='+encodeURIComponent(value)+';expires='+d.toUTCString()+';path='+location.pathname+';SameSite=Lax';
-		}
-		var MODE_COOKIE='ms365cal_mode',STYLE_COOKIE='ms365cal_style';
+		// Every fresh page load starts in the cheap, predictable List/Standard
+		// view. Visitors can still switch modes for the current page session, but
+		// prior cookies/localStorage no longer override the initial render.
 		var mode='list',layout='standard',calView='week';
-		(function(){
-			var savedMode=getCookie(MODE_COOKIE);
-			var savedStyle=getCookie(STYLE_COOKIE);
-			if(savedMode===null&&savedStyle===null){
-				try{
-					var old=localStorage.getItem('ms365cal_layout');
-					if(old==='standard'||old==='compact'||old==='expanded'){savedMode='list';savedStyle=old;}
-				}catch(e){}
-			}
-			if(savedMode==='list'||savedMode==='calendar')mode=savedMode;
-			if(mode==='list'){
-				if(savedStyle==='standard'||savedStyle==='compact'||savedStyle==='expanded')layout=savedStyle;
-			}else if(savedStyle==='day'||savedStyle==='3day'||savedStyle==='workweek'||savedStyle==='week'){
-				calView=savedStyle;
-			}
-		})();
 
 		var refDate=new Date(today);   // anchor date the current window is derived from
 		var monthRef=null;             // first-of-month Date, set only while calView==='month'
@@ -2734,8 +2702,6 @@ function ms365cal_assets() {
 				var next=b.getAttribute('data-mode');
 				if(next===mode)return;
 				mode=next;
-				setCookie(MODE_COOKIE,mode);
-				setCookie(STYLE_COOKIE,mode==='list'?layout:(calView==='month'?'week':calView));
 				floorOverride=null;
 				// Ground on today rather than carrying over wherever navigation had
 				// drifted to in the mode just left — e.g. paging Month forward a few
@@ -2753,15 +2719,12 @@ function ms365cal_assets() {
 					var nextLayout=b.getAttribute('data-layout');
 					if(!nextLayout||nextLayout===layout)return;
 					layout=nextLayout;
-					setCookie(STYLE_COOKIE,layout);
 					applyView();
 					paint(); // expanded needs the preview line (re)rendered
 				}else{
 					var nextView=b.getAttribute('data-calview');
 					if(!nextView||nextView===calView)return;
 					calView=nextView;
-					// Not persisted when it's "month" — see the cookie note above.
-					if(calView!=='month')setCookie(STYLE_COOKIE,calView);
 					refDate=new Date(today); // same reasoning as the mode switch above
 					recomputeWindow();
 					applyView();
@@ -2925,11 +2888,15 @@ function ms365cal_assets() {
 				// Bottom line: location on the left, recurrence pinned to the right (via
 				// margin-left:auto on the recurrence span, so it stays right-aligned
 				// whether or not a location is present).
+				var isRecurring=!!(e.recurring||e.recur);
+				var recurTitle=e.recur||'Återkommande händelse';
 				var recurShort=e.recur?e.recur.replace(/^Upprepas\s+/,''):'';
 				var locText=e.location?e.location:(e.online?'Online':'');
 				var metaBits='';
 				if(locText)metaBits+='<span class="ms365cal-loc-line">'+esc(locText)+'</span>';
-				if(e.recur)metaBits+='<span class="ms365cal-recur-line">\u21bb '+esc(recurShort)+'</span>';
+				if(isRecurring){
+					metaBits+='<span class="ms365cal-recur-line" title="'+escAttr(recurTitle)+'">\u21bb'+(recurShort?' '+esc(recurShort):'')+'</span>';
+				}
 				var metaLine=metaBits?'<div class="ms365cal-meta-line">'+metaBits+'</div>':'';
 
 				// Compact only: the recurrence pattern text is dropped to just the icon
@@ -2942,11 +2909,11 @@ function ms365cal_assets() {
 				var compactBits='';
 				if(locText){
 					compactBits+='<span class="ms365cal-loc-line">'+esc(locText)+'</span>';
-					compactBits+=e.recur
-						?'<span class="ms365cal-recur-line" title="'+escAttr(e.recur)+'">\u21bb</span>'
+					compactBits+=isRecurring
+						?'<span class="ms365cal-recur-line" title="'+escAttr(recurTitle)+'">\u21bb</span>'
 						:'<span class="ms365cal-recur-line" aria-hidden="true"></span>';
-				}else if(e.recur){
-					compactBits+='<span class="ms365cal-recur-line" title="'+escAttr(e.recur)+'">\u21bb</span>';
+				}else if(isRecurring){
+					compactBits+='<span class="ms365cal-recur-line" title="'+escAttr(recurTitle)+'">\u21bb</span>';
 				}
 				var compactMetaLine=compactBits?'<div class="ms365cal-meta-line">'+compactBits+'</div>':'';
 
